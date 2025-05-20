@@ -1,0 +1,493 @@
+#include "ControlInterface.h"
+#include "esp_log.h"
+#include "print.h"
+
+#define LOG_LOCAL_LEVEL ESP_LOG_DEBUG // Set local log level for this file
+
+static const char *TAG = "ControlInterface";
+
+ControlInterface::ControlInterface(protocol_config &config, controller_data_t &controllerData, TaskHandles &taskHandles)
+    : protocol(config), controllerData(controllerData), taskHandles(taskHandles)
+{
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Initializing control interface");
+    protocol.begin();
+    initMotorData();
+
+    // Initialize the run loop delay
+    runLoopDelay = 1000 / controllerData.controllerProperties.updateFrequencies.interfaceRun;
+
+    protocol.onCommandReceived = [this](uint8_t command)
+    {
+        this->CallFunction(command);
+    };
+
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Starting Control interface run task");
+    xTaskCreate([](void *param)
+                { static_cast<ControlInterface *>(param)->Run(); },
+                "Communication Interface", 4096, this, 5, &taskHandles.interface_task_handles.Run);
+}
+
+void ControlInterface::Ping()
+{
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Ping sent");
+    protocol.SendCommand(static_cast<uint8_t>(Command::PING));
+}
+
+void ControlInterface::start()
+{
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Starting motor controller");
+    controllerData.controllerProperties.run = true;
+    protocol.SendCommand(static_cast<uint8_t>(Command::READ_SUCCESS));
+}
+void ControlInterface::stop()
+{
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Stopping motor controller");
+    controllerData.controllerProperties.run = false;
+    protocol.SendCommand(static_cast<uint8_t>(Command::READ_SUCCESS));
+}
+
+bool ControlInterface::GetControllerProperties()
+{
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Reading controller properties");
+    controller_properties_t controllerPropertiesTemp;
+    if (protocol.ReadData((uint8_t *)&controllerPropertiesTemp, sizeof(controller_properties_t), 1000))
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Controller properties read successfully");
+
+        controllerData.controllerProperties = controllerPropertiesTemp;
+        if (initMotorData())
+        {
+            ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Motor data initialized successfully");
+            protocol.SendCommand(static_cast<uint8_t>(Command::READ_SUCCESS));
+            return true;
+        }
+        else
+        {
+            ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Motor data initialization failed");
+            protocol.SendCommand(static_cast<uint8_t>(Command::READ_FAILURE));
+            return false;
+        }
+    }
+    else
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Controller properties read failed");
+        protocol.SendCommand(static_cast<uint8_t>(Command::READ_FAILURE));
+        return false;
+    }
+}
+
+bool ControlInterface::initMotorData()
+{
+    controllerData.wheelData.clear();
+
+    if (controllerData.controllerProperties.numMotors > 0 && controllerData.controllerProperties.numMotors <= 10)
+    {
+        controllerData.wheelData.resize(controllerData.controllerProperties.numMotors);
+    }
+    else
+    {
+        return false;
+    }
+    xTaskNotify(taskHandles.wheel_manager, (1 << 10), eSetBits);
+    return true;
+}
+
+bool ControlInterface::GetMotorData()
+{
+    wheel_data_t temp;
+    uint8_t motorID = 0;
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Getting motor data...");
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Getting motor ID...");
+
+    if (protocol.ReadData(&motorID, sizeof(motorID)))
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Motor ID read successful");
+        if (motorID >= controllerData.controllerProperties.numMotors)
+        {
+            ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Motor ID out of range");
+            protocol.SendCommand(static_cast<uint8_t>(Command::READ_FAILURE));
+            return false;
+        }
+    }
+    else
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Motor ID read failed");
+        protocol.SendCommand(static_cast<uint8_t>(Command::READ_FAILURE));
+        return false;
+    }
+
+    if (protocol.ReadData((uint8_t *)&temp, sizeof(wheel_data_t), 1000))
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Motor data read successful for motor ID %d", motorID);
+        controllerData.wheelData[motorID] = temp;
+        protocol.SendCommand(static_cast<uint8_t>(Command::READ_SUCCESS));
+
+        // Sending notification to motor manager task to construct Wheels
+        xTaskNotify(taskHandles.wheel_manager, (1 << motorID), eSetBits);
+
+        return true;
+    }
+    else
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Motor data read failed for motor ID %d", motorID);
+        protocol.SendCommand(static_cast<uint8_t>(Command::READ_FAILURE));
+        return false;
+    }
+}
+
+void ControlInterface::stopAllBroadcast()
+{
+    controllerData.controllerProperties.odoBroadcastStatus = odo_broadcast_flags_t{0, 0, 0};
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "All broadcasts stopped");
+}
+
+void ControlInterface::restoreAllBroadcast()
+{
+    for (auto wheel_data : controllerData.wheelData)
+    {
+        controllerData.controllerProperties.odoBroadcastStatus.angle |= wheel_data.odoBroadcastStatus.angle;
+        controllerData.controllerProperties.odoBroadcastStatus.speed |= wheel_data.odoBroadcastStatus.speed;
+        controllerData.controllerProperties.odoBroadcastStatus.pwm_value |= wheel_data.odoBroadcastStatus.pwm_value;
+    }
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "All broadcasts restored");
+}
+
+bool ControlInterface::GetOdoBroadcastStatus()
+{
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Receiving Odo Broadcast Status");
+    odo_broadcast_flags_t temp;
+    uint8_t motorID;
+
+    if (protocol.ReadData(&motorID, sizeof(motorID)))
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Motor ID read successful Motor ID: %d", motorID);
+        if (motorID >= controllerData.controllerProperties.numMotors)
+        {
+            ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Motor ID out of range while reading broadcast status");
+            protocol.SendCommand(static_cast<uint8_t>(Command::READ_FAILURE));
+            return false;
+        }
+    }
+    else
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Motor ID read failed");
+        protocol.SendCommand(static_cast<uint8_t>(Command::READ_FAILURE));
+        return false;
+    }
+
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Getting broadcast status...");
+
+    if (protocol.ReadData((uint8_t *)&temp, sizeof(odo_broadcast_flags_t), 1000))
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Broadcast status read successful");
+        controllerData.wheelData[motorID].odoBroadcastStatus = temp;
+        protocol.SendCommand(static_cast<uint8_t>(Command::READ_SUCCESS));
+        xTaskNotify(taskHandles.wheel_task_handles[motorID].wheel_run_task_handle, ODO_BROADCAST_STATUS_UPDATE, eSetBits);
+
+        // Update broadcast status detail for control interface
+        controllerData.controllerProperties.odoBroadcastStatus = temp;
+        for (int i = 0; i < controllerData.controllerProperties.numMotors; i++)
+        {
+            controllerData.controllerProperties.odoBroadcastStatus.angle |= controllerData.wheelData[i].odoBroadcastStatus.angle;
+            controllerData.controllerProperties.odoBroadcastStatus.speed |= controllerData.wheelData[i].odoBroadcastStatus.speed;
+            controllerData.controllerProperties.odoBroadcastStatus.pwm_value |= controllerData.wheelData[i].odoBroadcastStatus.pwm_value;
+        }
+
+        return true;
+    }
+    else
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Broadcast status read failed");
+        protocol.SendCommand(static_cast<uint8_t>(Command::READ_FAILURE));
+        return false;
+    }
+}
+
+bool ControlInterface::GetPIDConstants()
+{
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Getting PID Constants...");
+
+    uint8_t motorID = 0;
+    uint8_t pidType = 0;
+    pid_constants_t temp;
+
+    // Read motor ID
+    if (!protocol.ReadData((uint8_t *)&motorID, sizeof(uint8_t), 1000))
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Motor ID read failed");
+        protocol.SendCommand(static_cast<uint8_t>(Command::READ_FAILURE));
+        return false;
+    }
+    else if (motorID >= controllerData.controllerProperties.numMotors)
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Invalid motor ID");
+        protocol.SendCommand(static_cast<uint8_t>(Command::READ_FAILURE));
+        return false;
+    }
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Motor ID read successfully: %d", motorID);
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Reading PID Constants type...");
+
+    // Read PID type
+    if (!protocol.ReadData((uint8_t *)&pidType, sizeof(uint8_t), 1000))
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "PID type read failed");
+        protocol.SendCommand(static_cast<uint8_t>(Command::READ_FAILURE));
+        return false;
+    }
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "PID type read successfully: %d", pidType);
+
+    // Read PID constants
+    if (!protocol.ReadData((uint8_t *)&temp, sizeof(pid_constants_t), 1000))
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "PID constants read failed");
+        protocol.SendCommand(static_cast<uint8_t>(Command::READ_FAILURE));
+        return false;
+    }
+
+    // Store PID constants based on the PID type
+    if (pidType == 0)
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Storing Angle PID constants...");
+        controllerData.wheelData[motorID].anglePIDConstants = temp;
+    }
+    else if (pidType == 1)
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Storing Speed PID constants...");
+        controllerData.wheelData[motorID].speedPIDConstants = temp;
+    }
+    else
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Invalid PID type read: %d", pidType);
+        protocol.SendCommand(static_cast<uint8_t>(Command::READ_FAILURE)); // Invalid PID type
+        return false;
+    }
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "PID constants stored successfully");
+    protocol.SendCommand(static_cast<uint8_t>(Command::READ_SUCCESS));
+    return true;
+}
+
+bool ControlInterface::GetMotorControlMode()
+{
+    ControlMode temp;
+    uint8_t motorID = 0;
+    protocol.ReadData(&motorID, 1);
+
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Reading control mode for motor %d...", motorID);
+    if (!protocol.ReadData((uint8_t *)&temp, sizeof(ControlMode)))
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to read control mode for motor %d", motorID);
+        return false;
+    }
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Motor %d control mode: %d", motorID, static_cast<int>(temp));
+
+    controllerData.wheelData[motorID].control_mode = temp;
+    // Notify the wheel task to update its control mode
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Notifying wheel task to update control mode for motor %d", motorID);
+    xTaskNotify(taskHandles.wheel_task_handles[motorID].wheel_run_task_handle, CONTROL_MODE_UPDATE, eSetBits);
+
+    protocol.SendCommand(static_cast<uint8_t>(Command::READ_SUCCESS));
+    return true;
+}
+
+bool ControlInterface::GetMotorSpeedSetpoints()
+{
+    angularvelocity_t motorRPM;
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Reading motor speed setpoints...");
+
+    // read speeds for each motor
+    for (uint8_t i = 0; i < controllerData.controllerProperties.numMotors; i++)
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Reading speed setpoint for motor %d...", i);
+
+        if (!protocol.ReadData((uint8_t *)&motorRPM, sizeof(angularvelocity_t)))
+        {
+            ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Failed to read speed setpoint for motor %d", i);
+            return false;
+        }
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Motor %d speed setpoint: %.2f RPM", i, motorRPM);
+        // Store the received RPM in the motor's setpoint
+        controllerData.wheelData[i].setpoint.rpm = motorRPM;
+    }
+
+    return true;
+}
+
+bool ControlInterface::GetMotorAngleSetpoints()
+{
+    angle_t motorAngle;
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Reading motor angle setpoints...");
+
+    // Read motor angles for each motor
+    for (uint8_t i = 0; i < controllerData.controllerProperties.numMotors; i++)
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Reading angle setpoint for motor %d...", i);
+
+        if (!protocol.ReadData((uint8_t *)&motorAngle, sizeof(int)))
+        {
+            ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Failed to read angle setpoint for motor %d", i);
+            return false;
+        }
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Motor %d angle setpoint: %.2f degrees", i, motorAngle);
+        // Store the received angle in the motor's setpoint
+        controllerData.wheelData[i].setpoint.angle = motorAngle;
+    }
+    return true;
+}
+
+bool ControlInterface::GetMotorPWMs()
+{
+    pwmvalue_t pwmValue;
+    // Read PWM values for each motor
+    for (uint8_t i = 0; i < controllerData.controllerProperties.numMotors; i++)
+    {
+        if (!protocol.ReadData((uint8_t *)&pwmValue, sizeof(pwmvalue_t)))
+        {
+            return false;
+        }
+        // Store the received PWM in the motor's setpoint
+        controllerData.wheelData[i].pwmValue = pwmValue;
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Motor %d PWM: %.3f", i, pwmValue);
+    }
+    return true;
+}
+
+void ControlInterface::SendOdoSpeeds()
+{
+    protocol.SendCommand(static_cast<uint8_t>(Command::SEND_ODO_SPEEDS));
+
+    for (uint8_t i = 0; i < controllerData.controllerProperties.numMotors; i++)
+    {
+        protocol.SendData((uint8_t *)&controllerData.wheelData[i].odometryData.rpm, sizeof(angularvelocity_t));
+    }
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "speed sent");
+}
+
+void ControlInterface::SendOdoAngles()
+{
+    protocol.SendCommand(static_cast<uint8_t>(Command::SEND_ODO_ANGLES));
+    for (uint8_t i = 0; i < controllerData.controllerProperties.numMotors; i++)
+    {
+        protocol.SendData((uint8_t *)&controllerData.wheelData[i].odometryData.angle, sizeof(angle_t));
+    }
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Angles send");
+}
+
+void ControlInterface::SendOdoPWMs()
+{
+    protocol.SendCommand(static_cast<uint8_t>(Command::SEND_ODO_PWMS));
+    for (uint8_t i = 0; i < controllerData.controllerProperties.numMotors; i++)
+    {
+        protocol.SendData((uint8_t *)&controllerData.wheelData[i].pwmValue, sizeof(pwmvalue_t));
+    }
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "PWM values sent");
+}
+
+bool ControlInterface::SendControllerProperties()
+{
+    protocol.SendCommand(static_cast<uint8_t>(Command::GET_CONTROLLER_PROPERTIES));
+    protocol.SendData((uint8_t *)&controllerData.controllerProperties, sizeof(controller_properties_t));
+    return true;
+}
+
+bool ControlInterface::SendMotorData()
+{
+    uint8_t motorID = 0;
+    protocol.ReadData((uint8_t *)&motorID, sizeof(motorID));
+
+    if (motorID >= controllerData.controllerProperties.numMotors)
+    {
+        protocol.SendCommand(static_cast<uint8_t>(Command::READ_FAILURE));
+        return false;
+    }
+
+    protocol.SendCommand(static_cast<uint8_t>(Command::GET_MOTOR_DATA));
+    protocol.SendData((uint8_t *)&motorID, sizeof(motorID));
+    protocol.SendData((uint8_t *)&controllerData.wheelData[motorID], sizeof(wheel_data_t));
+    return true;
+}
+
+void ControlInterface::Run()
+{
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Running control interface");
+    for (;;)
+    {
+
+        if (controllerData.controllerProperties.odoBroadcastStatus.angle == true)
+            SendOdoAngles();
+        if (controllerData.controllerProperties.odoBroadcastStatus.speed == true)
+            SendOdoSpeeds();
+        if (controllerData.controllerProperties.odoBroadcastStatus.pwm_value == true)
+            SendOdoPWMs();
+
+        vTaskDelay(pdMS_TO_TICKS(runLoopDelay));
+    }
+}
+
+void ControlInterface::CallFunction(uint8_t commandType)
+{
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Calling function for command type: %d", commandType);
+    switch (static_cast<Command>(commandType))
+    {
+    case Command::SET_MOTOR_CONTROL_MODES:
+        GetMotorControlMode();
+        break;
+    case Command::SET_MOTOR_SPEED_SETPOINTS:
+        GetMotorSpeedSetpoints();
+        break;
+    case Command::SET_MOTOR_ANGLE_SETPOINTS:
+        GetMotorAngleSetpoints();
+        break;
+    case Command::SET_MOTOR_PWMS:
+        GetMotorPWMs();
+        break;
+    case Command::PING:
+        Ping();
+        break;
+    case Command::START:
+        start();
+        break;
+    case Command::STOP:
+        stop();
+        break;
+    case Command::SET_CONTROLLER_PROPERTIES:
+        if (GetControllerProperties())
+            ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Controller properties set successfully");
+        else
+            ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to set controller properties");
+        break;
+
+    case Command::SET_MOTOR_DATA:
+        GetMotorData();
+        break;
+
+    case Command::STOP_ALL_BROADCAST:
+        stopAllBroadcast();
+        break;
+
+    case Command::RESTORE_ALL_BROADCAST:
+        restoreAllBroadcast();
+        break;
+
+    case Command::SET_PID_CONSTANTS:
+        GetPIDConstants();
+        break;
+
+    case Command::SET_ODO_BROADCAST_STATUS:
+        GetOdoBroadcastStatus();
+        break;
+
+    case Command::GET_MOTOR_DATA:
+        if (SendMotorData())
+            ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Motor data send successfully");
+        else
+            ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to sent motor data");
+
+        break;
+    case Command::GET_CONTROLLER_PROPERTIES:
+        SendControllerProperties();
+        break;
+
+    default:
+        break;
+    }
+}
