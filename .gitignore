@@ -1,0 +1,9 @@
+/.devcontainer
+/.vscode
+/build
+/sdkconfig.ci
+/sdkconfig.old
+idf-env.exe
+idf-driver-esp32-usb-jtag-2021-07-15.zip
+/managed_components
+
