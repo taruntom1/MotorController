@@ -26,18 +26,15 @@ void ManageWheels(void *pvParameters)
         motor_count = data.controllerProperties.numMotors;
 
         // Check if the 11th bit (from LSB) is set
-        if (ulNotificationValue & (1 << 10)) // 11th bit (0-based index)
+        if (ulNotificationValue & (1 << 10)) // 11th bit
         {
             ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Cleaning up previous motor instances");
             wheels.clear();
             taskHandles.wheel_task_handles.clear();
 
             // Allocate new motor structures
-
             ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Allocating memory for %d motors", motor_count);
-
             taskHandles.wheel_task_handles.resize(motor_count);
-            wheels.shrink_to_fit();
             wheels.reserve(motor_count);
         }
 
@@ -54,10 +51,15 @@ void ManageWheels(void *pvParameters)
 
                     if (it != wheels.end())
                     {
-                        // Remove the element
-                        wheels.erase(it);
+                        it->~Wheel();
+                        new (&(*it)) Wheel(&data.controllerProperties, &data.wheelData[i],
+                                           &taskHandles.wheel_task_handles[i], &taskHandles.wheel_manager);
                     }
-                    wheels.emplace_back(&data.controllerProperties, &data.wheelData[i], &taskHandles.wheel_task_handles[i]);
+                    else
+                    {
+                        wheels.emplace_back(&data.controllerProperties, &data.wheelData[i],
+                                            &taskHandles.wheel_task_handles[i], &taskHandles.wheel_manager);
+                    }
                 }
             }
         }
@@ -106,7 +108,7 @@ extern "C" void app_main()
     config.pinRX = 44;
     config.pinTX = 43;
 
-    xTaskCreate(ManageWheels, "Manage Wheels", 4096, NULL, 5, &taskHandles.wheel_manager);
+    xTaskCreate(ManageWheels, "Manage Wheels", 4096, NULL, 6, &taskHandles.wheel_manager);
     ControlInterface *controlInterface = new ControlInterface(config, data, taskHandles);
     xTaskCreate(cpu_usage_logger_task, "cpu_logger", 4096, NULL, 1, NULL);
 }

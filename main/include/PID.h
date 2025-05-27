@@ -14,10 +14,10 @@ template <typename T>
 class PID
 {
 public:
-  static const int AUTOMATIC = 1;
-  static const int MANUAL = 0;
-  static const int DIRECT = 0;
-  static const int REVERSE = 1;
+  static constexpr int AUTOMATIC = 1;
+  static constexpr int MANUAL = 0;
+  static constexpr int DIRECT = 0;
+  static constexpr int REVERSE = 1;
 
   PID(T *Input, T *Output, T *Setpoint,
       T Kp, T Ki, T Kd, int ControllerDirection,

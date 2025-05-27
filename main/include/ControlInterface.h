@@ -12,7 +12,6 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-
 /**
  * @defgroup Class
  * @brief Main class for the communication interface
@@ -135,19 +134,13 @@ public:
     bool GetOdoBroadcastStatus();
 
     /**
-     * @brief Sends odometry speeds to the device.
+     * @brief Sends odometry data
+     *
+     * This function is responsible for transmitting the current odometry data,
+     * which include information such as position, velocity, and pwm values of each motor.
+     * to other components or systems that require it for further processing or display.
      */
-    void SendOdoSpeeds();
-
-    /**
-     * @brief Sends odometry angles to the device.
-     */
-    void SendOdoAngles();
-
-    /**
-     * @brief Sends PWM values to the device.
-     */
-    void SendOdoPWMs();
+    void SendOdoData();
 
     /**
      * @brief Runs the main control loop.

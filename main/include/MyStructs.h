@@ -191,6 +191,7 @@ struct TaskHandles
 /** Wheel run task notifications */
 #define CONTROL_MODE_UPDATE (1 << 0)
 #define ODO_BROADCAST_STATUS_UPDATE (1 << 1)
+#define PID_CONSTANTS_UPDATE (1 << 2)
 
 /** @} */ // end of notifications
 

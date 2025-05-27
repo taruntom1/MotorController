@@ -22,7 +22,7 @@ struct protocol_config
 {
     int baudRate = 115200;         /**< Baud rate for UART communication. */
     uart_port_t port = UART_NUM_1; /**< UART port number. */
-    uint16_t bufferSize = 1024;    /**< Size of the UART buffer. */
+    uint16_t bufferSize = 2048;    /**< Size of the UART buffer. */
     uint8_t pinRX = 18;            /**< RX pin number. */
     uint8_t pinTX = 17;            /**< TX pin number. */
     uint8_t header = 0xAA;         /**< Header byte for the protocol. */
@@ -49,7 +49,7 @@ private:
         .parity = UART_PARITY_DISABLE,
         .stop_bits = UART_STOP_BITS_1,
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
-        .rx_flow_ctrl_thresh = 122,
+        .rx_flow_ctrl_thresh = 0,
         .source_clk = UART_SCLK_APB, // Ensure all fields are initialized
     };
     QueueHandle_t uart_queue;
@@ -90,7 +90,6 @@ public:
      * @return True if a command was successfully read, false otherwise.
      */
     bool ReadCommand(uint8_t &commandType, uint32_t timeout = 1000);
-
 
     /**
      * @brief Callback function to handle received commands.

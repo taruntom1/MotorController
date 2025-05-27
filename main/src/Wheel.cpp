@@ -12,49 +12,81 @@ constexpr UBaseType_t PWM_DIRECT_CONTROL_TASK_PRIORITY = 5;
 constexpr uint32_t ODO_BROADCAST_TASK_STACK_SIZE = 2500;
 constexpr UBaseType_t ODO_BROADCAST_TASK_PRIORITY = 5;
 // BITMASKS for notifications
-#define CONTROL_TASK_DELETED (1 << 5)
+// run task
+#define DESTROY_WHEEL_OBJECT (1 << 5)
+#define CONTROL_TASK_DELETED (1 << 10)
+// manage wheels task
+#define WHEEL_DESTROYED (1 << 12)
 
-Wheel::Wheel(controller_properties_t *controller_properties, wheel_data_t *wheel_data, WheelTaskHandles *task_handles)
-    : wheel_id(wheel_data->motor_id), wheel_data(wheel_data), task_handles(task_handles)
+Wheel::Wheel(controller_properties_t *controller_properties, wheel_data_t *wheel_data,
+             WheelTaskHandles *task_handles, TaskHandle_t *manage_wheels_taskHandle)
+    : wheel_id(wheel_data->motor_id),
+      wheel_data(wheel_data),
+      task_handles(task_handles),
+      manage_wheels_taskHandle(manage_wheels_taskHandle)
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Initializing Wheel instance %d", wheel_id);
 
-    this->loop_delays.anglePID = 1000 / this->wheel_data->updateFrequenciesWheel.angle_pid;
-    this->loop_delays.speedPID = 1000 / this->wheel_data->updateFrequenciesWheel.speed_pid;
-    this->loop_delays.PWM = 1000 / this->wheel_data->updateFrequenciesWheel.pwm;
-    this->loop_delays.encoder = 1000 / controller_properties->odoBroadcastFrequency;
+    InitLoopDelays(controller_properties);
+    InitMotorDriver();
+    InitEncoder();
+    InitTaskHandles();
+    StartWheelTask();
+}
 
-    // Initialize the motor driver
-    this->motor_config = {
+void Wheel::InitLoopDelays(controller_properties_t *controller_properties)
+{
+    loop_delays.anglePID = 1000 / wheel_data->updateFrequenciesWheel.angle_pid;
+    loop_delays.speedPID = 1000 / wheel_data->updateFrequenciesWheel.speed_pid;
+    loop_delays.PWM = 1000 / wheel_data->updateFrequenciesWheel.pwm;
+    loop_delays.encoder = 1000 / controller_properties->odoBroadcastFrequency;
+}
+
+void Wheel::InitMotorDriver()
+{
+    motor_config = {
         .directionPin = (gpio_num_t)wheel_data->motorConnections.dir,
         .pwmPin = (gpio_num_t)wheel_data->motorConnections.pwm,
         .clockFrequencyHz = 1000000,
         .pwmResolution = 1000};
 
-    motorDriver = std::make_unique<MotorDriver>(this->motor_config);
+    motorDriver = std::make_unique<MotorDriver>(motor_config);
     motorDriver->init();
-    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "MotorDriver initialized for Wheel %d", wheel_id);
 
-    // Initialize the encoder
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "MotorDriver initialized for Wheel %d", wheel_id);
+}
+
+void Wheel::InitEncoder()
+{
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Initializing encoder configuration for Wheel %d", wheel_id);
-    this->encoder_config = {
+
+    encoder_config = {
         .channel_config = {
             .edge_gpio_num = (gpio_num_t)wheel_data->motorConnections.enc_a,
             .level_gpio_num = (gpio_num_t)wheel_data->motorConnections.enc_b}};
-    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Creating EncoderPulseReader object for Wheel %d", wheel_id);
-    encoder = std::make_unique<EncoderPulseReader>(&this->encoder_config);
+
+    encoder = std::make_unique<EncoderPulseReader>(&encoder_config);
 
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Encoder initialized for Wheel %d", wheel_id);
+}
 
-    this->task_handles->wheel_run_task_handle = nullptr;
-    this->task_handles->odo_broadcast = nullptr;
-    this->task_handles->control_task_handle = nullptr;
+void Wheel::InitTaskHandles()
+{
+    task_handles->wheel_run_task_handle = nullptr;
+    task_handles->odo_broadcast = nullptr;
+    task_handles->control_task_handle = nullptr;
+}
 
-    // Start the wheel run task
+void Wheel::StartWheelTask()
+{
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Starting Wheel run task for instance %d", wheel_id);
+
     createTask([](void *param)
                { static_cast<Wheel *>(param)->Run(); },
-               "Wheel run task", &this->task_handles->wheel_run_task_handle, WHEEL_RUN_TASK_STACK_SIZE, WHEEL_RUN_TASK_PRIORITY);
+               "Wheel run task",
+               &task_handles->wheel_run_task_handle,
+               WHEEL_RUN_TASK_STACK_SIZE,
+               WHEEL_RUN_TASK_PRIORITY);
 }
 
 Wheel::Wheel(Wheel &&other) noexcept
@@ -62,17 +94,19 @@ Wheel::Wheel(Wheel &&other) noexcept
       wheel_id(other.wheel_id),
       wheel_data(other.wheel_data),
       task_handles(other.task_handles),
+      manage_wheels_taskHandle(other.manage_wheels_taskHandle),
       loop_delays(other.loop_delays),
       motor_config(other.motor_config),
       motorDriver(std::move(other.motorDriver)),
       encoder_config(other.encoder_config),
-      encoder(std::move(other.encoder)),
-      control_task_run(other.control_task_run)
+      encoder(std::move(other.encoder))
+
 {
     // Optional: reset other's raw pointers or flags if necessary
+    control_task_run.store(false, std::memory_order_release);
     other.wheel_data = nullptr;
     other.task_handles = nullptr;
-    other.control_task_run = false;
+    other.control_task_run.store(false, std::memory_order_release);
 }
 
 Wheel &Wheel::operator=(Wheel &&other) noexcept
@@ -83,17 +117,18 @@ Wheel &Wheel::operator=(Wheel &&other) noexcept
         wheel_id = other.wheel_id;
         wheel_data = other.wheel_data;
         task_handles = other.task_handles;
+        manage_wheels_taskHandle = other.manage_wheels_taskHandle;
         loop_delays = other.loop_delays;
         motor_config = other.motor_config;
         motorDriver = std::move(other.motorDriver);
         encoder_config = other.encoder_config;
         encoder = std::move(other.encoder);
-        control_task_run = other.control_task_run;
+        control_task_run.store(false, std::memory_order_release);
 
         // Optional: reset other's state
         other.wheel_data = nullptr;
         other.task_handles = nullptr;
-        other.control_task_run = false;
+        other.control_task_run.store(false, std::memory_order_release);
     }
     return *this;
 }
@@ -101,23 +136,21 @@ Wheel &Wheel::operator=(Wheel &&other) noexcept
 Wheel::~Wheel()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Destroying Wheel instance %d", wheel_id);
+    xTaskNotify(task_handles->wheel_run_task_handle, DESTROY_WHEEL_OBJECT, eSetBits);
 
-    if (task_handles->control_task_handle != nullptr)
+    // Wait for destruction to complete
+    uint32_t receivedFlags;
+    while (true)
     {
-        control_task_run = false;
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Stopping Control task for instance %d", wheel_id);
+        xTaskNotifyWait(0, WHEEL_DESTROYED, &receivedFlags, portMAX_DELAY);
+        if ((receivedFlags & WHEEL_DESTROYED) != 0)
+            break;
     }
-
     if (task_handles->wheel_run_task_handle != nullptr)
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Stopping Wheel run task for instance %d", wheel_id);
         vTaskDelete(task_handles->wheel_run_task_handle);
         task_handles->wheel_run_task_handle = nullptr;
-    }
-    if (task_handles->odo_broadcast != nullptr)
-    {
-        vTaskDelete(task_handles->odo_broadcast);
-        task_handles->odo_broadcast = nullptr;
     }
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Wheel instance %d destroyed", wheel_id);
 }
@@ -141,10 +174,19 @@ void Wheel::Run()
         {
             updateControlMode();
         }
+        if (receivedFlags & PID_CONSTANTS_UPDATE)
+        {
+            pid_const_update.store(true, std::memory_order_release);
+        }
 
         if (receivedFlags & ODO_BROADCAST_STATUS_UPDATE)
         {
             updateOdoBroadcastStatus();
+        }
+
+        if (receivedFlags & DESTROY_WHEEL_OBJECT)
+        {
+            objectDestructor();
         }
     }
 }
@@ -153,7 +195,7 @@ void Wheel::PWMDirectControl()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Wheel %d PWM Direct Control task started", wheel_id);
     TickType_t xLastWakeTime = xTaskGetTickCount();
-    while (control_task_run)
+    while (likely(control_task_run.load(std::memory_order_acquire)))
     {
         float speed = wheel_data->pwmValue;
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Wheel %d speed set: %.2f", wheel_id, speed);
@@ -179,12 +221,23 @@ void Wheel::anglePIDControl()
                                               1000 / wheel_data->updateFrequenciesWheel.angle_pid);
     pid->SetMode(pid->AUTOMATIC);
 
-    while (control_task_run)
+    while (likely(control_task_run.load(std::memory_order_acquire)))
     {
         wheel_data->odometryData.angle = encoder->get_raw_angle();
         pid->Compute();
         motorDriver->setSpeed(wheel_data->pwmValue);
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, " %d pwm: %.2f RPM SP: %.2f INP %.2f", wheel_id, wheel_data->pwmValue, wheel_data->setpoint.angle, wheel_data->odometryData.angle);
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, " %d pwm: %.2f RPM SP: %.2f INP %.2f",
+                            wheel_id, wheel_data->pwmValue, wheel_data->setpoint.angle,
+                            wheel_data->odometryData.angle);
+
+        if (unlikely(pid_const_update.load(std::memory_order_acquire)))
+        {
+            ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Wheel %d updating PID constants", wheel_id);
+            pid->SetTunings(wheel_data->anglePIDConstants.p,
+                            wheel_data->anglePIDConstants.i,
+                            wheel_data->anglePIDConstants.d);
+            pid_const_update.store(false, std::memory_order_release);
+        }
 
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(loop_delays.anglePID));
     }
@@ -211,12 +264,22 @@ void Wheel::speedPIDControl()
 
     pid->SetMode(PID<angularvelocity_t>::AUTOMATIC);
 
-    while (control_task_run)
+    while (likely(control_task_run.load(std::memory_order_acquire)))
     {
         wheel_data->odometryData.rpm = encoder->get_raw_velocity();
         pid->Compute();
         motorDriver->setSpeed(wheel_data->pwmValue);
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, "%d pwm: %.2f RPM SP: %.2f odo: %.2f", wheel_id, wheel_data->pwmValue, wheel_data->setpoint.rpm, wheel_data->odometryData.rpm);
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, "%d pwm: %.2f RPM SP: %.2f odo: %.2f",
+                            wheel_id, wheel_data->pwmValue, wheel_data->setpoint.rpm,
+                            wheel_data->odometryData.rpm);
+        if (unlikely(pid_const_update.load(std::memory_order_acquire)))
+        {
+            ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Wheel %d updating PID constants", wheel_id);
+            pid->SetTunings(wheel_data->speedPIDConstants.p,
+                            wheel_data->speedPIDConstants.i,
+                            wheel_data->speedPIDConstants.d);
+            pid_const_update.store(false, std::memory_order_release);
+        }
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(loop_delays.speedPID));
     }
 
@@ -257,19 +320,19 @@ bool Wheel::updateControlMode()
     switch (wheel_data->control_mode)
     {
     case ControlMode::PWM_DIRECT_CONTROL:
-        control_task_run = true;
+        control_task_run.store(true, std::memory_order_release);
         createTask([](void *param)
                    { static_cast<Wheel *>(param)->PWMDirectControl(); },
                    "PWMDirectControl", &task_handles->control_task_handle, PWM_DIRECT_CONTROL_TASK_STACK_SIZE, PWM_DIRECT_CONTROL_TASK_PRIORITY);
         break;
     case ControlMode::POSITION_CONTROL:
-        control_task_run = true;
+        control_task_run.store(true, std::memory_order_release);
         createTask([](void *param)
                    { static_cast<Wheel *>(param)->anglePIDControl(); },
                    "anglePIDControl", &task_handles->control_task_handle, CONTROL_TASK_STACK_SIZE, CONTROL_TASK_PRIORITY);
         break;
     case ControlMode::SPEED_CONTROL:
-        control_task_run = true;
+        control_task_run.store(true, std::memory_order_release);
         createTask([](void *param)
                    { static_cast<Wheel *>(param)->speedPIDControl(); },
                    "speedPIDControl", &task_handles->control_task_handle, CONTROL_TASK_STACK_SIZE, CONTROL_TASK_PRIORITY);
@@ -321,7 +384,7 @@ bool Wheel::deleteControlTask()
     if (task_handles->control_task_handle == nullptr)
         return true;
 
-    control_task_run = false;
+    control_task_run.store(false, std::memory_order_release);
     uint32_t flags;
     auto status = xTaskNotifyWait(0, CONTROL_TASK_DELETED, &flags, pdMS_TO_TICKS(1000));
     if (status != pdPASS || !(flags & CONTROL_TASK_DELETED))
@@ -334,4 +397,22 @@ bool Wheel::deleteControlTask()
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Control task deleted successfully");
         return true;
     }
+}
+
+void Wheel::objectDestructor()
+{
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Stopping Control task for instance %d", wheel_id);
+    if (deleteControlTask())
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Control task stopped for instance %d", wheel_id);
+    }
+
+    if (task_handles->odo_broadcast != nullptr)
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Stopping Odo Broadcast task for instance %d", wheel_id);
+        vTaskDelete(task_handles->odo_broadcast);
+        task_handles->odo_broadcast = nullptr;
+    }
+
+    xTaskNotify(*manage_wheels_taskHandle, WHEEL_DESTROYED, eSetBits);
 }
