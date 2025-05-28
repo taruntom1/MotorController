@@ -151,7 +151,7 @@ public:
      * @brief Calls a specific function based on the command type.
      * @param commandType Command identifier to execute.
      */
-    void CallFunction(uint8_t commandType);
+    void CallFunction(Command commandType);
 };
 /** @} */
 

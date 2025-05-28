@@ -10,6 +10,8 @@
 #include "driver/uart.h"
 #include "esp_log.h"
 #include <functional>
+#include <vector>
+#include "Commands.h"
 
 /**
  * @struct protocol_config
@@ -74,13 +76,14 @@ public:
      * @brief Sends a command over UART.
      * @param commandType The type of command to send.
      */
-    void SendCommand(const uint8_t commandType);
+    void SendCommand(const Command commandType);
 
     /**
      * @brief Sends data over UART.
      * @param data Pointer to the data array to send.
      * @param length Length of the data array.
      */
+    void SendData(const std::vector<uint8_t>& data);
     void SendData(const uint8_t *data, const uint8_t length);
 
     /**
@@ -89,7 +92,7 @@ public:
      * @param timeout Timeout duration in milliseconds (default is 1000 ms).
      * @return True if a command was successfully read, false otherwise.
      */
-    bool ReadCommand(uint8_t &commandType, uint32_t timeout = 1000);
+    bool ReadCommand(Command &commandType, uint32_t timeout = 1000);
 
     /**
      * @brief Callback function to handle received commands.
@@ -99,7 +102,7 @@ public:
      *
      * @param command The received command byte.
      */
-    std::function<void(uint8_t)> onCommandReceived;
+    std::function<void(Command)> onCommandReceived;
 
     /**
      * @brief Reads data from UART with an optional timeout.
@@ -109,6 +112,7 @@ public:
      * @return True if data was successfully read, false otherwise.
      */
     bool ReadData(uint8_t *data, uint8_t length, uint32_t timeout = 1000);
+    std::vector<uint8_t> ReadData(uint8_t length, uint32_t timeout = 1000);
 };
 
 #endif // UART_PROTOCOL_H
