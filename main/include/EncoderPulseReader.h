@@ -24,7 +24,9 @@ struct pcnt_config_t
 {
     pcnt_unit_config_t unit_config = {/**< Configuration for the PCNT unit. */
                                       .low_limit = -32767,
-                                      .high_limit = 32767};
+                                      .high_limit = 32767,
+                                      .intr_priority = 0,
+                                      .flags = {.accum_count = 1}};
     pcnt_chan_config_t channel_config;                                                /**< Configuration for the PCNT channel. */
     pcnt_glitch_filter_config_t glitch_filter_config;                                 /**< Configuration for the PCNT glitch filter. */
     pcnt_channel_edge_action_t pos_edge_action = PCNT_CHANNEL_EDGE_ACTION_INCREASE;   /**< Action on positive edge. */
@@ -65,7 +67,7 @@ private:
     pcnt_unit_handle_t pcnt_unit = NULL;       /**< Handle for the PCNT unit. */
     pcnt_channel_handle_t pcnt_channel = NULL; /**< Handle for the PCNT channel. */
     int previous_count = 0;                    /**< Previous pulse count for velocity calculation. */
-    int64_t previous_time = 0;                 /**< Previous timestamp for velocity calculation. */
+    uint64_t previous_time_us = 0;              /**< Previous timestamp for velocity calculation. */
 
 public:
     /**
@@ -106,13 +108,20 @@ public:
      * @brief Calculates and returns the raw angle based on the current pulse count.
      * @return The raw angle in degrees or radians, depending on implementation.
      */
-    angle_t get_raw_angle();
+    encoder_ticks_t get_ticks();
 
     /**
      * @brief Calculates and returns the raw velocity based on pulse count changes over time.
      * @return The raw velocity, typically in pulses per second or equivalent units.
      */
-    angularvelocity_t get_raw_velocity();
+    encoder_tickrate_t get_tickrate();
+
+    encoder_ticks_t get_ticks(timestamp_t &timestamp);
+    encoder_tickrate_t get_tickrate(timestamp_t &timestamp);
+    void get_tick_tickrate(encoder_ticks_t &ticks, encoder_tickrate_t &tickrate, timestamp_t &timestamp);
+
+
+
 };
 
 /** @} */ // End of EncoderPulseReaderModule

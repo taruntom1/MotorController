@@ -1,6 +1,6 @@
 #include "Wheel.h"
 
-#define LOG_LOCAL_LEVEL ESP_LOG_DEBUG // Set local log level for this file
+#define LOG_LOCAL_LEVEL ESP_LOG_INFO // Set local log level for this file
 
 // Task stack sizes and priorities for Wheel tasks
 constexpr uint32_t WHEEL_RUN_TASK_STACK_SIZE = 4000;
@@ -191,18 +191,36 @@ void Wheel::Run()
     }
 }
 
+void Wheel::updateOdometry()
+{
+    encoder_ticks_t ticks;
+    encoder_tickrate_t tickrate;
+    timestamp_t timestamp;
+    encoder->get_tick_tickrate(ticks, tickrate, timestamp);
+
+    angle = static_cast<angle_t>(ticks);
+    angular_velocity = static_cast<angularvelocity_t>(tickrate);
+
+    wheel_data->odometryData.angle.store(angle);
+    wheel_data->odometryData.angular_velocity.store(angular_velocity);
+    wheel_data->odometryData.timestamp.store(timestamp);
+}
+
 void Wheel::PWMDirectControl()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Wheel %d PWM Direct Control task started", wheel_id);
     TickType_t xLastWakeTime = xTaskGetTickCount();
+    encoder->start_pulse_counter();
     while (likely(control_task_run.load(std::memory_order_acquire)))
     {
-        float speed = wheel_data->pwmValue;
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Wheel %d speed set: %.2f", wheel_id, speed);
-        motorDriver->setSpeed(speed);
+        updateOdometry();
+        pwmvalue_t pwm_value = wheel_data->pwmValue.load();
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Wheel %d speed set: %.2f", wheel_id, pwm_value);
+        motorDriver->setSpeed(pwm_value);
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(loop_delays.PWM));
     }
     motorDriver->setSpeed(0);
+    encoder->stop_pulse_counter();
     xTaskNotify(task_handles->wheel_run_task_handle, CONTROL_TASK_DELETED, eSetBits);
     vTaskDelete(NULL);
 }
@@ -210,10 +228,14 @@ void Wheel::PWMDirectControl()
 void Wheel::anglePIDControl()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Wheel %d angle PID Control task started", wheel_id);
+
+    angle_t setpoint = 0;
+    pwmvalue_t pwm_value = 0;
+
     TickType_t xLastWakeTime = xTaskGetTickCount();
     encoder->start_pulse_counter();
-    auto pid = std::make_unique<PID<angle_t>>(&wheel_data->odometryData.angle, &wheel_data->pwmValue,
-                                              &wheel_data->setpoint.angle,
+    auto pid = std::make_unique<PID<angle_t>>(&angle, &pwm_value,
+                                              &setpoint,
                                               wheel_data->anglePIDConstants.p,
                                               wheel_data->anglePIDConstants.i,
                                               wheel_data->anglePIDConstants.d,
@@ -223,12 +245,18 @@ void Wheel::anglePIDControl()
 
     while (likely(control_task_run.load(std::memory_order_acquire)))
     {
-        wheel_data->odometryData.angle = encoder->get_raw_angle();
+        setpoint = wheel_data->setpoint.angle.load();
+
+        updateOdometry();
+
         pid->Compute();
-        motorDriver->setSpeed(wheel_data->pwmValue);
+
+        wheel_data->pwmValue.store(pwm_value);
+        motorDriver->setSpeed(pwm_value);
+
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, " %d pwm: %.2f RPM SP: %.2f INP %.2f",
-                            wheel_id, wheel_data->pwmValue, wheel_data->setpoint.angle,
-                            wheel_data->odometryData.angle);
+                            wheel_id, pwm_value, setpoint,
+                            angle);
 
         if (unlikely(pid_const_update.load(std::memory_order_acquire)))
         {
@@ -252,10 +280,14 @@ void Wheel::anglePIDControl()
 void Wheel::speedPIDControl()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Wheel %d speed PID Control task started", wheel_id);
+
+    angularvelocity_t setpoint = 0;
+    pwmvalue_t pwm_value = 0;
+
     TickType_t xLastWakeTime = xTaskGetTickCount();
     encoder->start_pulse_counter();
-    auto pid = std::make_unique<PID<angularvelocity_t>>(&wheel_data->odometryData.rpm, &wheel_data->pwmValue,
-                                                        &wheel_data->setpoint.rpm,
+    auto pid = std::make_unique<PID<angularvelocity_t>>(&angular_velocity, &pwm_value,
+                                                        &setpoint,
                                                         wheel_data->speedPIDConstants.p,
                                                         wheel_data->speedPIDConstants.i,
                                                         wheel_data->speedPIDConstants.d,
@@ -266,12 +298,19 @@ void Wheel::speedPIDControl()
 
     while (likely(control_task_run.load(std::memory_order_acquire)))
     {
-        wheel_data->odometryData.rpm = encoder->get_raw_velocity();
+        setpoint = wheel_data->setpoint.rpm.load();
+
+        updateOdometry();
+
         pid->Compute();
-        motorDriver->setSpeed(wheel_data->pwmValue);
+
+        wheel_data->pwmValue.store(pwm_value);
+        motorDriver->setSpeed(pwm_value);
+
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, "%d pwm: %.2f RPM SP: %.2f odo: %.2f",
-                            wheel_id, wheel_data->pwmValue, wheel_data->setpoint.rpm,
-                            wheel_data->odometryData.rpm);
+                            wheel_id, pwm_value, setpoint,
+                            angular_velocity);
+
         if (unlikely(pid_const_update.load(std::memory_order_acquire)))
         {
             ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Wheel %d updating PID constants", wheel_id);
@@ -280,6 +319,7 @@ void Wheel::speedPIDControl()
                             wheel_data->speedPIDConstants.d);
             pid_const_update.store(false, std::memory_order_release);
         }
+
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(loop_delays.speedPID));
     }
 
@@ -296,16 +336,7 @@ void Wheel::odoBroadcast()
     TickType_t xLastWakeTime = xTaskGetTickCount();
     while (true)
     {
-        if (wheel_data->odoBroadcastStatus.angle)
-        {
-            wheel_data->odometryData.angle = encoder->get_raw_angle();
-            ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, "Wheel %d angle: %.3f", wheel_id, wheel_data->odometryData.angle);
-        }
-        if (wheel_data->odoBroadcastStatus.speed)
-        {
-            wheel_data->odometryData.rpm = encoder->get_raw_velocity();
-            ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, "Wheel %d rpm: %.3f", wheel_id, wheel_data->odometryData.rpm);
-        }
+        updateOdometry();
         vTaskDelayUntil(&xLastWakeTime, pdMS_TO_TICKS(loop_delays.encoder));
     }
 }
@@ -352,7 +383,7 @@ void Wheel::updateOdoBroadcastStatus()
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Wheel %d changing ODO Broadcast Status", wheel_id);
     if ((wheel_data->odoBroadcastStatus.angle ||
          wheel_data->odoBroadcastStatus.speed) &&
-        wheel_data->control_mode == ControlMode::PWM_DIRECT_CONTROL)
+        wheel_data->control_mode == ControlMode::OFF)
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Wheel %d starting ODO Broadcast", wheel_id);
         encoder->start_pulse_counter();

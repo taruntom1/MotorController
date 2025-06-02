@@ -53,6 +53,10 @@ private:
     std::atomic<bool> control_task_run{false};
     std::atomic<bool> pid_const_update{false};
 
+    // odometry data
+    angle_t angle = 0;
+    angularvelocity_t angular_velocity = 0;
+
     // Initialization Methods
     void InitLoopDelays(controller_properties_t *controller_properties);
     void InitMotorDriver();
@@ -65,6 +69,7 @@ private:
     bool updateControlMode();
     void updateOdoBroadcastStatus();
 
+    void updateOdometry();
     void PWMDirectControl();
     void anglePIDControl();
     void speedPIDControl();

@@ -44,21 +44,50 @@ void EncoderPulseReader::clear_pulse_count()
     }
 }
 
-angle_t EncoderPulseReader::get_raw_angle()
+encoder_ticks_t EncoderPulseReader::get_ticks()
 {
     int current_count;
     pcnt_unit_get_count(pcnt_unit, &current_count);
-    angle_t angle = static_cast<float>(current_count);
-    return angle;
+    return current_count;
 }
 
-angularvelocity_t EncoderPulseReader::get_raw_velocity()
+encoder_tickrate_t EncoderPulseReader::get_tickrate()
+{
+    timestamp_t timestamp;
+    return get_ticks(timestamp);
+}
+
+encoder_ticks_t EncoderPulseReader::get_ticks(timestamp_t &timestamp)
+{
+    timestamp = esp_timer_get_time();
+    return get_ticks();
+}
+
+encoder_tickrate_t EncoderPulseReader::get_tickrate(timestamp_t &timestamp)
 {
     int current_count;
-    uint64_t current_time = esp_timer_get_time();
     pcnt_unit_get_count(pcnt_unit, &current_count);
-    angularvelocity_t velocity = (current_count - previous_count) / static_cast<float>(current_time - previous_time);
+
+    timestamp = esp_timer_get_time();
+    float delta_time_us = timestamp - previous_time_us;
+
+    encoder_tickrate_t tickrate = (current_count - previous_count) / delta_time_us;
+
     previous_count = current_count;
-    previous_time = current_time;
-    return velocity;
+    previous_time_us = timestamp;
+
+    return tickrate;
+}
+
+void EncoderPulseReader::get_tick_tickrate(encoder_ticks_t &ticks, encoder_tickrate_t &tickrate, timestamp_t &timestamp)
+{
+    pcnt_unit_get_count(pcnt_unit, &ticks);
+
+    timestamp = esp_timer_get_time();
+    float delta_time_us = timestamp - previous_time_us;
+
+    tickrate = (ticks - previous_count) / delta_time_us;
+
+    previous_count = ticks;
+    previous_time_us = timestamp;
 }

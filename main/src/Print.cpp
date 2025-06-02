@@ -27,7 +27,7 @@ void printMotorConnections(const connections_wheel_t &conn)
 
 void printOdometryData(const odometry_t &data)
 {
-    cout << "OdometryData: angle=" << data.angle << ", rpm=" << data.rpm << endl;
+    cout << "OdometryData: angle=" << data.angle << ", rpm=" << data.angular_velocity << endl;
 }
 
 void printSetpoint(const setpoint_t &setpoint)

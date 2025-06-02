@@ -6,11 +6,13 @@
 #ifndef CONTROL_INTERFACE_H
 #define CONTROL_INTERFACE_H
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+
 #include "UART_Protocol.h"
 #include "MyStructs.h"
 #include "Commands.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include "TimeSyncServer.h"
 
 /**
  * @defgroup Class
@@ -32,6 +34,8 @@ private:
     TaskHandles &taskHandles; ///< Reference to task handles for managing tasks.
 
     uint16_t runLoopDelay; ///< Delay between loop iterations for run method.
+
+    void syncTime();
 
 public:
     /**

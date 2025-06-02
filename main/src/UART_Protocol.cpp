@@ -36,39 +36,32 @@ void UARTProtocol::processEvents()
 {
     uart_event_t event;
     uint8_t data[128];
-    while (true)
-    {
-        if (xQueueReceive(uart_queue, &event, portMAX_DELAY))
-        {
-            ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "UART event received Event type: %d", event.type);
-            if (event.type == UART_PATTERN_DET)
-            {
-                ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Pattern detected ");
-                int pattern_pos = uart_pattern_pop_pos(config.port);
-                if (pattern_pos >= 0)
-                {
-                    // Read up to and including the pattern
-                    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Pattern detected at position %d", pattern_pos);
-                    int read_len = uart_read_bytes(config.port, data, pattern_pos + 3, 2);
 
-                    if (read_len >= pattern_pos + 3)
-                    {
-                        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Pattern ");
-                        uint8_t cmd;
-                        int cmd_read = uart_read_bytes(config.port, &cmd, 1, pdMS_TO_TICKS(10));
-                        if (cmd_read == 1)
-                        {
-                            ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Command received: 0x%02X", cmd);
-                            onCommandReceived(static_cast<Command>(cmd));
-                        }
-                    }
+    while (xQueueReceive(uart_queue, &event, portMAX_DELAY))
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "UART event received Event type: %d", event.type);
+
+        if (event.type == UART_PATTERN_DET)
+        {
+            int pattern_pos = uart_pattern_pop_pos(config.port);
+            if (pattern_pos >= 0)
+            {
+                int read_len = uart_read_bytes(config.port, data, pattern_pos + 4, pdMS_TO_TICKS(20));
+                if (read_len >= pattern_pos + 3)
+                {
+                    uint8_t cmd = data[pattern_pos + 3];
+                    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Command received: 0x%02X", cmd);
+                    onCommandReceived(static_cast<Command>(cmd));
                 }
                 else
                 {
-                    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Flusihing ");
-                    uart_flush_input(config.port);
-                    xQueueReset(uart_queue);
+                    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Partial read: %d bytes", read_len);
                 }
+            }
+            else
+            {
+                uart_flush_input(config.port);
+                ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Pattern pop failed. Input flushed.");
             }
         }
     }

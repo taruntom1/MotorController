@@ -7,6 +7,8 @@ enum class Command : uint8_t
     PING,
     READ_SUCCESS,
     READ_FAILURE,
+    SYNC_TIME,
+
     START,
     STOP,
     RESET,
@@ -34,7 +36,7 @@ enum class Command : uint8_t
     SEND_ODO_SPEEDS,
     SEND_ODO_ANGLES,
     SEND_ODO_PWMS,
-
+    SEND_ODO_TIMESTAMPED_ANGLES
 };
 
 #endif // COMMANDS_H

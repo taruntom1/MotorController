@@ -104,7 +104,7 @@ extern "C" void app_main()
 {
 
     config.port = UART_NUM_0;
-    config.baudRate = 115200;
+    config.baudRate = 576000;
     config.pinRX = 44;
     config.pinTX = 43;
 

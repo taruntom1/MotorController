@@ -65,6 +65,7 @@ bool ControlInterface::GetControllerProperties()
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Motor data initialized successfully");
         protocol.SendCommand(Command::READ_SUCCESS);
+        runLoopDelay = 1000 / controllerData.controllerProperties.updateFrequencies.interfaceRun;
         return true;
     }
     else
@@ -126,17 +127,15 @@ bool ControlInterface::GetMotorData()
 
 void ControlInterface::stopAllBroadcast()
 {
-    controllerData.controllerProperties.odoBroadcastStatus = odo_broadcast_flags_t{0, 0, 0};
+    controllerData.controllerProperties.odoBroadcastStatus = odo_broadcast_flags_t{0, 0, 0, 0};
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "All broadcasts stopped");
 }
 
 void ControlInterface::restoreAllBroadcast()
 {
-    for (auto wheel_data : controllerData.wheelData)
+    for (auto &wheel_data : controllerData.wheelData)
     {
-        controllerData.controllerProperties.odoBroadcastStatus.angle |= wheel_data.odoBroadcastStatus.angle;
-        controllerData.controllerProperties.odoBroadcastStatus.speed |= wheel_data.odoBroadcastStatus.speed;
-        controllerData.controllerProperties.odoBroadcastStatus.pwm_value |= wheel_data.odoBroadcastStatus.pwm_value;
+        controllerData.controllerProperties.odoBroadcastStatus |= wheel_data.odoBroadcastStatus;
     }
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "All broadcasts restored");
 }
@@ -172,11 +171,9 @@ bool ControlInterface::GetOdoBroadcastStatus()
     odo_broadcast_flags_t &aggregatedStatus = controllerData.controllerProperties.odoBroadcastStatus;
     memset(&aggregatedStatus, 0, sizeof(odo_broadcast_flags_t));
 
-    for (int i = 0; i < controllerData.controllerProperties.numMotors; i++)
+    for (wheel_data_t &wheel : controllerData.wheelData)
     {
-        aggregatedStatus.angle |= controllerData.wheelData[i].odoBroadcastStatus.angle;
-        aggregatedStatus.speed |= controllerData.wheelData[i].odoBroadcastStatus.speed;
-        aggregatedStatus.pwm_value |= controllerData.wheelData[i].odoBroadcastStatus.pwm_value;
+        aggregatedStatus |= wheel.odoBroadcastStatus;
     }
 
     return true;
@@ -260,7 +257,7 @@ bool ControlInterface::GetMotorSpeedSetpoints()
 
     for (uint8_t i = 0; i < motorCount; i++)
     {
-        controllerData.wheelData[i].setpoint.rpm = motorRPMs[i];
+        controllerData.wheelData[i].setpoint.rpm.store(motorRPMs[i]);
     }
 
     return true;
@@ -278,7 +275,7 @@ bool ControlInterface::GetMotorAngleSetpoints()
 
     for (uint8_t i = 0; i < motorCount; i++)
     {
-        controllerData.wheelData[i].setpoint.angle = motorAngles[i];
+        controllerData.wheelData[i].setpoint.angle.store(motorAngles[i]);
     }
     return true;
 }
@@ -295,7 +292,7 @@ bool ControlInterface::GetMotorPWMs()
 
     for (uint8_t i = 0; i < motorCount; i++)
     {
-        controllerData.wheelData[i].pwmValue = pwmValues[i];
+        controllerData.wheelData[i].pwmValue.store(pwmValues[i]);
     }
 
     return true;
@@ -306,8 +303,9 @@ void ControlInterface::SendOdoData()
     const bool speedBroadcast = controllerData.controllerProperties.odoBroadcastStatus.speed;
     const bool angleBroadcast = controllerData.controllerProperties.odoBroadcastStatus.angle;
     const bool pwmBroadcast = controllerData.controllerProperties.odoBroadcastStatus.pwm_value;
+    const bool timestampedAngleBroadcast = controllerData.controllerProperties.odoBroadcastStatus.timestamped_ticks;
 
-    if (!speedBroadcast && !angleBroadcast && !pwmBroadcast)
+    if (!speedBroadcast && !angleBroadcast && !pwmBroadcast && !timestampedAngleBroadcast)
         return;
 
     const uint8_t header[] = {0xaa, 0xaa, 0xaa};
@@ -316,8 +314,9 @@ void ControlInterface::SendOdoData()
     const size_t angleBlockSize = angleBroadcast ? (4 + sizeof(angle_t) * numMotors) : 0;
     const size_t speedBlockSize = speedBroadcast ? (4 + sizeof(angularvelocity_t) * numMotors) : 0;
     const size_t pwmBlockSize = pwmBroadcast ? (4 + sizeof(pwmvalue_t) * numMotors) : 0;
+    const size_t timestampedAngleBlockSize = timestampedAngleBroadcast ? (4 + sizeof(timestamped_angle_t) * numMotors) : 0;
 
-    const size_t totalSize = angleBlockSize + speedBlockSize + pwmBlockSize;
+    const size_t totalSize = angleBlockSize + speedBlockSize + pwmBlockSize + timestampedAngleBlockSize;
     std::vector<uint8_t> data(totalSize);
 
     uint8_t *ptr = data.data();
@@ -340,13 +339,17 @@ void ControlInterface::SendOdoData()
     };
 
     write_block(angleBroadcast, Command::SEND_ODO_ANGLES, [](const auto &w)
-                { return w.odometryData.angle; }, sizeof(angle_t));
+                { return w.odometryData.angle.load(); }, sizeof(angle_t));
 
     write_block(speedBroadcast, Command::SEND_ODO_SPEEDS, [](const auto &w)
-                { return w.odometryData.rpm; }, sizeof(angularvelocity_t));
+                { return w.odometryData.angular_velocity.load(); }, sizeof(angularvelocity_t));
 
     write_block(pwmBroadcast, Command::SEND_ODO_PWMS, [](const auto &w)
-                { return w.pwmValue; }, sizeof(pwmvalue_t));
+                { return w.pwmValue.load(); }, sizeof(pwmvalue_t));
+
+    write_block(timestampedAngleBroadcast, Command::SEND_ODO_TIMESTAMPED_ANGLES, [](const auto &w)
+                { timestamped_angle_t timestampedAngle = {w.odometryData.timestamp.load(), w.odometryData.angle.load()};
+                    return timestampedAngle; }, sizeof(timestamped_angle_t));
 
     protocol.SendData(data);
 }
@@ -390,6 +393,9 @@ void ControlInterface::CallFunction(Command commandType)
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Calling function for command type: %d", static_cast<uint8_t>(commandType));
     switch (commandType)
     {
+    case Command::SYNC_TIME:
+        handleTimeSyncRequest(&protocol);
+        break;
     case Command::SET_MOTOR_CONTROL_MODES:
         GetMotorControlMode();
         break;
