@@ -32,61 +32,7 @@ Wheel::Wheel(controller_properties_t *controller_properties, wheel_data_t *wheel
     InitEncoder();
     InitTaskHandles();
     StartWheelTask();
-}
-
-void Wheel::InitLoopDelays(controller_properties_t *controller_properties)
-{
-    loop_delays.anglePID = 1000 / wheel_data->updateFrequenciesWheel.angle_pid;
-    loop_delays.speedPID = 1000 / wheel_data->updateFrequenciesWheel.speed_pid;
-    loop_delays.PWM = 1000 / wheel_data->updateFrequenciesWheel.pwm;
-    loop_delays.encoder = 1000 / controller_properties->odoBroadcastFrequency;
-}
-
-void Wheel::InitMotorDriver()
-{
-    motor_config = {
-        .directionPin = (gpio_num_t)wheel_data->motorConnections.dir,
-        .pwmPin = (gpio_num_t)wheel_data->motorConnections.pwm,
-        .clockFrequencyHz = 1000000,
-        .pwmResolution = 1000};
-
-    motorDriver = std::make_unique<MotorDriver>(motor_config);
-    motorDriver->init();
-
-    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "MotorDriver initialized for Wheel %d", wheel_id);
-}
-
-void Wheel::InitEncoder()
-{
-    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Initializing encoder configuration for Wheel %d", wheel_id);
-
-    encoder_config = {
-        .channel_config = {
-            .edge_gpio_num = (gpio_num_t)wheel_data->motorConnections.enc_a,
-            .level_gpio_num = (gpio_num_t)wheel_data->motorConnections.enc_b}};
-
-    encoder = std::make_unique<EncoderPulseReader>(&encoder_config);
-
-    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Encoder initialized for Wheel %d", wheel_id);
-}
-
-void Wheel::InitTaskHandles()
-{
-    task_handles->wheel_run_task_handle = nullptr;
-    task_handles->odo_broadcast = nullptr;
-    task_handles->control_task_handle = nullptr;
-}
-
-void Wheel::StartWheelTask()
-{
-    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Starting Wheel run task for instance %d", wheel_id);
-
-    createTask([](void *param)
-               { static_cast<Wheel *>(param)->Run(); },
-               "Wheel run task",
-               &task_handles->wheel_run_task_handle,
-               WHEEL_RUN_TASK_STACK_SIZE,
-               WHEEL_RUN_TASK_PRIORITY);
+    xTaskNotify(task_handles->wheel_run_task_handle, (CONTROL_MODE_UPDATE) | (ODO_BROADCAST_STATUS_UPDATE), eSetBits);
 }
 
 Wheel::Wheel(Wheel &&other) noexcept
@@ -155,6 +101,61 @@ Wheel::~Wheel()
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Wheel instance %d destroyed", wheel_id);
 }
 
+void Wheel::InitLoopDelays(controller_properties_t *controller_properties)
+{
+    loop_delays.anglePID = 1000 / wheel_data->updateFrequenciesWheel.angle_pid;
+    loop_delays.speedPID = 1000 / wheel_data->updateFrequenciesWheel.speed_pid;
+    loop_delays.PWM = 1000 / wheel_data->updateFrequenciesWheel.pwm;
+    loop_delays.encoder = 1000 / controller_properties->odoBroadcastFrequency;
+}
+
+void Wheel::InitMotorDriver()
+{
+    motor_config = {
+        .directionPin = (gpio_num_t)wheel_data->motorConnections.dir,
+        .pwmPin = (gpio_num_t)wheel_data->motorConnections.pwm,
+        .clockFrequencyHz = 1000000,
+        .pwmResolution = 1000};
+
+    motorDriver = std::make_unique<MotorDriver>(motor_config);
+    motorDriver->init();
+
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "MotorDriver initialized for Wheel %d", wheel_id);
+}
+
+void Wheel::InitEncoder()
+{
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Initializing encoder configuration for Wheel %d", wheel_id);
+
+    encoder_config = {
+        .channel_config = {
+            .edge_gpio_num = (gpio_num_t)wheel_data->motorConnections.enc_a,
+            .level_gpio_num = (gpio_num_t)wheel_data->motorConnections.enc_b}};
+
+    encoder = std::make_unique<EncoderPulseReader>(&encoder_config);
+
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Encoder initialized for Wheel %d", wheel_id);
+}
+
+void Wheel::InitTaskHandles()
+{
+    task_handles->wheel_run_task_handle = nullptr;
+    task_handles->odo_broadcast = nullptr;
+    task_handles->control_task_handle = nullptr;
+}
+
+void Wheel::StartWheelTask()
+{
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Starting Wheel run task for instance %d", wheel_id);
+
+    createTask([](void *param)
+               { static_cast<Wheel *>(param)->Run(); },
+               "Wheel run task",
+               &task_handles->wheel_run_task_handle,
+               WHEEL_RUN_TASK_STACK_SIZE,
+               WHEEL_RUN_TASK_PRIORITY);
+}
+
 uint8_t Wheel::GetWheelID() const
 {
     return wheel_id;
@@ -198,8 +199,8 @@ void Wheel::updateOdometry()
     timestamp_t timestamp;
     encoder->get_tick_tickrate(ticks, tickrate, timestamp);
 
-    angle = static_cast<angle_t>(ticks);
-    angular_velocity = static_cast<angularvelocity_t>(tickrate);
+    angle = static_cast<angle_t>(ticks) * wheel_data->radians_per_tick;
+    angular_velocity = static_cast<angularvelocity_t>(tickrate) * wheel_data->radians_per_tick;
 
     wheel_data->odometryData.angle.store(angle);
     wheel_data->odometryData.angular_velocity.store(angular_velocity);
@@ -382,7 +383,8 @@ void Wheel::updateOdoBroadcastStatus()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Wheel %d changing ODO Broadcast Status", wheel_id);
     if ((wheel_data->odoBroadcastStatus.angle ||
-         wheel_data->odoBroadcastStatus.speed) &&
+         wheel_data->odoBroadcastStatus.speed ||
+         wheel_data->odoBroadcastStatus.timestamped_angle) &&
         wheel_data->control_mode == ControlMode::OFF)
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Wheel %d starting ODO Broadcast", wheel_id);

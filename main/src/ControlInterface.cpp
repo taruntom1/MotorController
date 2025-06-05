@@ -303,7 +303,7 @@ void ControlInterface::SendOdoData()
     const bool speedBroadcast = controllerData.controllerProperties.odoBroadcastStatus.speed;
     const bool angleBroadcast = controllerData.controllerProperties.odoBroadcastStatus.angle;
     const bool pwmBroadcast = controllerData.controllerProperties.odoBroadcastStatus.pwm_value;
-    const bool timestampedAngleBroadcast = controllerData.controllerProperties.odoBroadcastStatus.timestamped_ticks;
+    const bool timestampedAngleBroadcast = controllerData.controllerProperties.odoBroadcastStatus.timestamped_angle;
 
     if (!speedBroadcast && !angleBroadcast && !pwmBroadcast && !timestampedAngleBroadcast)
         return;

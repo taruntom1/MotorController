@@ -69,7 +69,6 @@ void printMotorData(const wheel_data_t &motor)
     printControlMode(motor.control_mode);
     printPIDConstants(motor.anglePIDConstants);
     printPIDConstants(motor.speedPIDConstants);
-    printPWMLimits(motor.pwmLimits);
     printMotorConnections(motor.motorConnections);
     printOdometryData(motor.odometryData);
     printSetpoint(motor.setpoint);

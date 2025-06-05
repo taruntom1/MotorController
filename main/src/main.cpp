@@ -1,10 +1,13 @@
-#include "ControlInterface.h"
-#include "Wheel.h"
+#include <vector>
+
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include <vector>
 #include "esp_timer.h"
+
+#include "ControlInterface.h"
+#include "Wheel.h"
+#include "MPU6050Reader.h"
 
 #define LOG_LOCAL_LEVEL ESP_LOG_INFO // Set local log level for this file
 
@@ -110,5 +113,20 @@ extern "C" void app_main()
 
     xTaskCreate(ManageWheels, "Manage Wheels", 4096, NULL, 6, &taskHandles.wheel_manager);
     ControlInterface *controlInterface = new ControlInterface(config, data, taskHandles);
+
+    MPU6050Reader::Config cfg{};
+    cfg.i2c_port          = I2C_NUM_0;
+    cfg.sda_io_num        = GPIO_NUM_21;
+    cfg.scl_io_num        = GPIO_NUM_22;
+    cfg.i2c_clk_speed_hz  = 400000;               // 400 kHz
+    cfg.dev_addr          = MPU6050_I2C_ADDRESS;  // 0x68
+    cfg.acce_fs           = ACCE_FS_4G;           // ±4g
+    cfg.gyro_fs           = GYRO_FS_500DPS;       // ±500 °/s
+    cfg.sample_rate_hz    = 50;                   // 50 Hz
+    cfg.task_priority     = tskIDLE_PRIORITY + 1;
+    cfg.task_stack_size   = 4096;                 // 4 KB stack
+
+    static MPU6050Reader imuReader(cfg, &imu_data);
+
     xTaskCreate(cpu_usage_logger_task, "cpu_logger", 4096, NULL, 1, NULL);
 }

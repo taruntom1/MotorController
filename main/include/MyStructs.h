@@ -41,10 +41,10 @@ struct odo_broadcast_flags_t
     bool angle = false;
     bool speed = false;
     bool pwm_value = false;
-    bool timestamped_ticks = false;
+    bool timestamped_angle = false;
 
     constexpr static size_t size = sizeof(angle) + sizeof(speed) +
-                                   sizeof(pwm_value) + sizeof(timestamped_ticks);
+                                   sizeof(pwm_value) + sizeof(timestamped_angle);
 
     std::vector<uint8_t> to_bytes() const
     {
@@ -53,7 +53,7 @@ struct odo_broadcast_flags_t
         detail::appendLE(buf, angle);
         detail::appendLE(buf, speed);
         detail::appendLE(buf, pwm_value);
-        detail::appendLE(buf, timestamped_ticks);
+        detail::appendLE(buf, timestamped_angle);
         return buf;
     }
     void from_bytes(const std::vector<uint8_t> &buf, size_t &offset)
@@ -61,13 +61,13 @@ struct odo_broadcast_flags_t
         angle = detail::readLE<bool>(buf, offset);
         speed = detail::readLE<bool>(buf, offset);
         pwm_value = detail::readLE<bool>(buf, offset);
-        timestamped_ticks = detail::readLE<bool>(buf, offset);
+        timestamped_angle = detail::readLE<bool>(buf, offset);
     }
 
     bool operator==(const odo_broadcast_flags_t &other)
     {
         return (angle == other.angle) && (speed == other.speed) &&
-               (pwm_value == other.pwm_value) && (timestamped_ticks == other.timestamped_ticks);
+               (pwm_value == other.pwm_value) && (timestamped_angle == other.timestamped_angle);
     }
     bool operator!=(const odo_broadcast_flags_t &other)
     {
@@ -79,7 +79,7 @@ struct odo_broadcast_flags_t
         angle |= rhs.angle;
         speed |= rhs.speed;
         pwm_value |= rhs.pwm_value;
-        timestamped_ticks |= rhs.timestamped_ticks;
+        timestamped_angle |= rhs.timestamped_angle;
         return *this;
     }
 };
@@ -320,18 +320,19 @@ struct wheel_data_t
     ControlMode control_mode = ControlMode::PWM_DIRECT_CONTROL;
     pid_constants_t anglePIDConstants;
     pid_constants_t speedPIDConstants;
-    limits_pwm_t pwmLimits;
     connections_wheel_t motorConnections;
     odometry_t odometryData;
     setpoint_t setpoint;
     odo_broadcast_flags_t odoBroadcastStatus;
     wheel_update_frequencies_t updateFrequenciesWheel;
+    float radians_per_tick = 1.0f;
     std::atomic<pwmvalue_t> pwmValue{0};
 
     constexpr static size_t size = sizeof(motor_id) + sizeof(control_mode) +
-                                   pid_constants_t::size * 2 + limits_pwm_t::size +
-                                   connections_wheel_t::size + odometry_t::size + setpoint_t::size +
-                                   odo_broadcast_flags_t::size + wheel_update_frequencies_t::size;
+                                   pid_constants_t::size * 2 + connections_wheel_t::size +
+                                   odometry_t::size + setpoint_t::size +
+                                   odo_broadcast_flags_t::size + wheel_update_frequencies_t::size +
+                                   sizeof(radians_per_tick) + sizeof(pwmValue);
 
     wheel_data_t() = default;
 
@@ -341,12 +342,12 @@ struct wheel_data_t
           control_mode(std::move(other.control_mode)),
           anglePIDConstants(std::move(other.anglePIDConstants)),
           speedPIDConstants(std::move(other.speedPIDConstants)),
-          pwmLimits(std::move(other.pwmLimits)),
           motorConnections(std::move(other.motorConnections)),
           odometryData(std::move(other.odometryData)),
           setpoint(std::move(other.setpoint)),
           odoBroadcastStatus(std::move(other.odoBroadcastStatus)),
-          updateFrequenciesWheel(std::move(other.updateFrequenciesWheel))
+          updateFrequenciesWheel(std::move(other.updateFrequenciesWheel)),
+          radians_per_tick(other.radians_per_tick)
     {
         pwmValue.store(other.pwmValue.load(std::memory_order_relaxed));
     }
@@ -360,12 +361,12 @@ struct wheel_data_t
             control_mode = std::move(other.control_mode);
             anglePIDConstants = std::move(other.anglePIDConstants);
             speedPIDConstants = std::move(other.speedPIDConstants);
-            pwmLimits = std::move(other.pwmLimits);
             motorConnections = std::move(other.motorConnections);
             odometryData = std::move(other.odometryData);
             setpoint = std::move(other.setpoint);
             odoBroadcastStatus = std::move(other.odoBroadcastStatus);
             updateFrequenciesWheel = std::move(other.updateFrequenciesWheel);
+            radians_per_tick = other.radians_per_tick;
             pwmValue.store(other.pwmValue.load(std::memory_order_relaxed));
         }
         return *this;
@@ -382,8 +383,6 @@ struct wheel_data_t
         buf.insert(buf.end(), a.begin(), a.end());
         auto s = speedPIDConstants.to_bytes();
         buf.insert(buf.end(), s.begin(), s.end());
-        auto l = pwmLimits.to_bytes();
-        buf.insert(buf.end(), l.begin(), l.end());
         auto c = motorConnections.to_bytes();
         buf.insert(buf.end(), c.begin(), c.end());
         auto o = odometryData.to_bytes();
@@ -394,6 +393,7 @@ struct wheel_data_t
         buf.insert(buf.end(), f.begin(), f.end());
         auto uf = updateFrequenciesWheel.to_bytes();
         buf.insert(buf.end(), uf.begin(), uf.end());
+        detail::appendLE(buf, radians_per_tick);
         detail::appendLE(buf, pwmValue.load());
         return buf;
     }
@@ -404,12 +404,12 @@ struct wheel_data_t
         ::from_bytes(control_mode, buf, offset);
         anglePIDConstants.from_bytes(buf, offset);
         speedPIDConstants.from_bytes(buf, offset);
-        pwmLimits.from_bytes(buf, offset);
         motorConnections.from_bytes(buf, offset);
         odometryData.from_bytes(buf, offset);
         setpoint.from_bytes(buf, offset);
         odoBroadcastStatus.from_bytes(buf, offset);
         updateFrequenciesWheel.from_bytes(buf, offset);
+        radians_per_tick = detail::readLE<float>(buf, offset);
         pwmValue.store(detail::readLE<pwmvalue_t>(buf, offset));
     }
 };
