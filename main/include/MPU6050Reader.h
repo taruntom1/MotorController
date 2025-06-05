@@ -23,7 +23,7 @@ extern "C"
 /**
  * @brief Struct that holds the 6-axis IMU data (3-axis accelerometer, 3-axis gyroscope)
  */
-struct IMUData
+struct imu_data_t
 {
     float acce_x;
     float acce_y;
@@ -93,7 +93,7 @@ public:
      * @param out_data_ptr Pointer to an IMUData struct where readings will be stored.
      *                     Must remain valid for the lifetime of this object.
      */
-    MPU6050Reader(const Config &config, IMUData *out_data_ptr);
+    MPU6050Reader(const Config &config, imu_data_t *out_data_ptr);
 
     /**
      * @brief Destructor: stops the reading task, deletes MPU6050 handle, and cleans up.
@@ -149,7 +149,7 @@ private:
 
 private:
     Config cfg_;
-    IMUData *data_ptr_;              /*!< Shared data struct pointer */
+    imu_data_t *data_ptr_;              /*!< Shared data struct pointer */
     mpu6050_handle_t sensor_handle_; /*!< Underlying C handle for MPU6050 */
     SemaphoreHandle_t data_mutex_;   /*!< Mutex protecting data_ptr_ */
     TaskHandle_t task_handle_;       /*!< Handle for the FreeRTOS reading task */

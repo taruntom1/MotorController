@@ -6,7 +6,7 @@
 #include "esp_timer.h"
 
 #include "ControlInterface.h"
-#include "Wheel.h"
+#include "WheelManager.h"
 #include "MPU6050Reader.h"
 
 #define LOG_LOCAL_LEVEL ESP_LOG_INFO // Set local log level for this file
@@ -14,60 +14,6 @@
 controller_data_t data;
 TaskHandles taskHandles;
 protocol_config config;
-
-void ManageWheels(void *pvParameters)
-{
-    static const char *TAG = "ManageMotors";
-    static uint8_t motor_count = 0;
-    std::vector<Wheel> wheels;
-
-    while (true)
-    {
-        uint32_t ulNotificationValue;
-        xTaskNotifyWait(0, ULONG_MAX, &ulNotificationValue, portMAX_DELAY);
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Motor management task triggered");
-        motor_count = data.controllerProperties.numMotors;
-
-        // Check if the 11th bit (from LSB) is set
-        if (ulNotificationValue & (1 << 10)) // 11th bit
-        {
-            ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Cleaning up previous motor instances");
-            wheels.clear();
-            taskHandles.wheel_task_handles.clear();
-
-            // Allocate new motor structures
-            ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Allocating memory for %d motors", motor_count);
-            taskHandles.wheel_task_handles.resize(motor_count);
-            wheels.reserve(motor_count);
-        }
-
-        // Check if the first 10 bits are not zero
-        uint16_t wheelMask = (ulNotificationValue & 0x03FF); // Extract first 10 bits
-        for (uint8_t i = 0; i < 10; ++i)
-        {
-            if (wheelMask & (1 << i)) // If the bit is set, construct the corresponding wheel
-            {
-                if (i < motor_count) // Ensure within bounds
-                {
-                    auto it = std::find_if(wheels.begin(), wheels.end(), [i](const Wheel &obj)
-                                           { return obj.GetWheelID() == i; });
-
-                    if (it != wheels.end())
-                    {
-                        it->~Wheel();
-                        new (&(*it)) Wheel(&data.controllerProperties, &data.wheelData[i],
-                                           &taskHandles.wheel_task_handles[i], &taskHandles.wheel_manager);
-                    }
-                    else
-                    {
-                        wheels.emplace_back(&data.controllerProperties, &data.wheelData[i],
-                                            &taskHandles.wheel_task_handles[i], &taskHandles.wheel_manager);
-                    }
-                }
-            }
-        }
-    }
-}
 
 void cpu_usage_logger_task(void *param)
 {
@@ -105,26 +51,30 @@ void configure_timer_for_run_time_stats(void)
 
 extern "C" void app_main()
 {
-
     config.port = UART_NUM_0;
     config.baudRate = 576000;
     config.pinRX = 44;
     config.pinTX = 43;
 
-    xTaskCreate(ManageWheels, "Manage Wheels", 4096, NULL, 6, &taskHandles.wheel_manager);
+    static WheelManager wheelManager(&data, &taskHandles);
+    xTaskCreate(WheelManager::TaskEntry, "Manage Wheels", 4096, &wheelManager, 6, &taskHandles.wheel_manager);
+
     ControlInterface *controlInterface = new ControlInterface(config, data, taskHandles);
 
     MPU6050Reader::Config cfg{};
-    cfg.i2c_port          = I2C_NUM_0;
-    cfg.sda_io_num        = GPIO_NUM_21;
-    cfg.scl_io_num        = GPIO_NUM_22;
-    cfg.i2c_clk_speed_hz  = 400000;               // 400 kHz
-    cfg.dev_addr          = MPU6050_I2C_ADDRESS;  // 0x68
-    cfg.acce_fs           = ACCE_FS_4G;           // ±4g
-    cfg.gyro_fs           = GYRO_FS_500DPS;       // ±500 °/s
-    cfg.sample_rate_hz    = 50;                   // 50 Hz
-    cfg.task_priority     = tskIDLE_PRIORITY + 1;
-    cfg.task_stack_size   = 4096;                 // 4 KB stack
+    cfg.i2c_port = I2C_NUM_0;
+    cfg.sda_io_num = GPIO_NUM_41;
+    cfg.scl_io_num = GPIO_NUM_42;
+    cfg.i2c_clk_speed_hz = 400000;
+    cfg.dev_addr = MPU6050_I2C_ADDRESS;
+    cfg.acce_fs = ACCE_FS_4G;
+    cfg.gyro_fs = GYRO_FS_500DPS;
+    cfg.sample_rate_hz = 50;
+    cfg.task_priority = tskIDLE_PRIORITY + 1;
+    cfg.task_stack_size = 4096;
+
+    imu_data_t imu_data{};
+    
 
     static MPU6050Reader imuReader(cfg, &imu_data);
 

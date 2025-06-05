@@ -2,7 +2,7 @@
 #include <cstring> // For memset
 #include <cstdio>  // For printf (optional debugging)
 
-MPU6050Reader::MPU6050Reader(const Config &config, IMUData *out_data_ptr)
+MPU6050Reader::MPU6050Reader(const Config &config, imu_data_t *out_data_ptr)
     : cfg_(config),
       data_ptr_(out_data_ptr),
       sensor_handle_(nullptr),
@@ -168,7 +168,7 @@ imu_data_t MPU6050Reader::readData()
     imu_data_t copy;
     if (xSemaphoreTake(data_mutex_, pdMS_TO_TICKS(10)) == pdTRUE)
     {
-        copy = *data_;
+        copy = *data_ptr_;
         xSemaphoreGive(data_mutex_);
     }
     else
