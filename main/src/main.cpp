@@ -57,7 +57,7 @@ extern "C" void app_main()
     config.pinTX = 43;
 
     static WheelManager wheelManager(&data, &taskHandles);
-    xTaskCreate(WheelManager::TaskEntry, "Manage Wheels", 4096, &wheelManager, 6, &taskHandles.wheel_manager);
+    xTaskCreate(WheelManager::wheelManageTaskEntry, "Manage Wheels", 4096, &wheelManager, 6, &taskHandles.wheel_manager);
 
     ControlInterface *controlInterface = new ControlInterface(config, data, taskHandles);
 

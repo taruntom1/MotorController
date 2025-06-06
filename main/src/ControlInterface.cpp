@@ -7,8 +7,8 @@
 
 static const char *TAG = "ControlInterface";
 
-ControlInterface::ControlInterface(protocol_config &config, controller_data_t &controllerData, TaskHandles &taskHandles)
-    : protocol(config), controllerData(controllerData), taskHandles(taskHandles)
+ControlInterface::ControlInterface(protocol_config &config)
+    : protocol(config)
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Initializing control interface");
     protocol.begin();
@@ -74,22 +74,6 @@ bool ControlInterface::GetControllerProperties()
         protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
-}
-
-bool ControlInterface::initMotorData()
-{
-    controllerData.wheelData.clear();
-
-    if (controllerData.controllerProperties.numMotors > 0 && controllerData.controllerProperties.numMotors <= 10)
-    {
-        controllerData.wheelData.resize(controllerData.controllerProperties.numMotors);
-    }
-    else
-    {
-        return false;
-    }
-    xTaskNotify(taskHandles.wheel_manager, (1 << 10), eSetBits);
-    return true;
 }
 
 bool ControlInterface::GetMotorData()
@@ -376,16 +360,6 @@ bool ControlInterface::SendMotorData()
     protocol.SendData((uint8_t *)&motorID, sizeof(motorID));
     protocol.SendData(controllerData.wheelData[motorID].to_bytes());
     return true;
-}
-
-void ControlInterface::Run()
-{
-    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Running control interface");
-    for (;;)
-    {
-        SendOdoData();
-        vTaskDelay(pdMS_TO_TICKS(runLoopDelay));
-    }
 }
 
 void ControlInterface::CallFunction(Command commandType)

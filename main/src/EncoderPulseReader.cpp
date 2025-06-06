@@ -1,7 +1,8 @@
 #include "EncoderPulseReader.h"
 
 EncoderPulseReader::EncoderPulseReader(pcnt_config_t *_pcnt_config)
-    : _pcnt_config(_pcnt_config)
+    : _pcnt_config(_pcnt_config),
+      inverse_cycles_per_sec(1.0f / static_cast<float>(esp_rom_get_cpu_ticks_per_us() * 1000000))
 {
     ESP_ERROR_CHECK(pcnt_new_unit(&_pcnt_config->unit_config, &pcnt_unit));
     ESP_ERROR_CHECK(pcnt_new_channel(pcnt_unit, &_pcnt_config->channel_config, &pcnt_channel));
@@ -53,41 +54,29 @@ encoder_ticks_t EncoderPulseReader::get_ticks()
 
 encoder_tickrate_t EncoderPulseReader::get_tickrate()
 {
-    timestamp_t timestamp;
-    return get_ticks(timestamp);
-}
-
-encoder_ticks_t EncoderPulseReader::get_ticks(timestamp_t &timestamp)
-{
-    timestamp = esp_timer_get_time();
-    return get_ticks();
-}
-
-encoder_tickrate_t EncoderPulseReader::get_tickrate(timestamp_t &timestamp)
-{
     int current_count;
     pcnt_unit_get_count(pcnt_unit, &current_count);
 
-    timestamp = esp_timer_get_time();
-    float delta_time_us = timestamp - previous_time_us;
+    uint32_t current_cpu_cycles = cpu_hal_get_cycle_count();
+    float delta_time_us = static_cast<float>(current_cpu_cycles - previous_cpu_cycles) * inverse_cycles_per_sec;
 
-    encoder_tickrate_t tickrate = (current_count - previous_count) / delta_time_us;
+    encoder_tickrate_t tickrate = static_cast<float>(current_count - previous_count) / delta_time_us;
 
     previous_count = current_count;
-    previous_time_us = timestamp;
+    previous_cpu_cycles = current_cpu_cycles;
 
     return tickrate;
 }
 
-void EncoderPulseReader::get_tick_tickrate(encoder_ticks_t &ticks, encoder_tickrate_t &tickrate, timestamp_t &timestamp)
+void EncoderPulseReader::get_tick_tickrate(encoder_ticks_t &ticks, encoder_tickrate_t &tickrate)
 {
     pcnt_unit_get_count(pcnt_unit, &ticks);
 
-    timestamp = esp_timer_get_time();
-    float delta_time_us = timestamp - previous_time_us;
+    uint32_t current_cpu_cycles = cpu_hal_get_cycle_count();
+    float delta_time_us = static_cast<float>(current_cpu_cycles - previous_cpu_cycles) * inverse_cycles_per_sec;
 
-    tickrate = (ticks - previous_count) / delta_time_us;
+    tickrate = static_cast<float>(ticks - previous_count) / delta_time_us;
 
     previous_count = ticks;
-    previous_time_us = timestamp;
+    previous_cpu_cycles = current_cpu_cycles;
 }

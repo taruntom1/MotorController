@@ -41,10 +41,9 @@ struct odo_broadcast_flags_t
     bool angle = false;
     bool speed = false;
     bool pwm_value = false;
-    bool timestamped_angle = false;
 
     constexpr static size_t size = sizeof(angle) + sizeof(speed) +
-                                   sizeof(pwm_value) + sizeof(timestamped_angle);
+                                   sizeof(pwm_value);
 
     std::vector<uint8_t> to_bytes() const
     {
@@ -53,7 +52,6 @@ struct odo_broadcast_flags_t
         detail::appendLE(buf, angle);
         detail::appendLE(buf, speed);
         detail::appendLE(buf, pwm_value);
-        detail::appendLE(buf, timestamped_angle);
         return buf;
     }
     void from_bytes(const std::vector<uint8_t> &buf, size_t &offset)
@@ -61,13 +59,12 @@ struct odo_broadcast_flags_t
         angle = detail::readLE<bool>(buf, offset);
         speed = detail::readLE<bool>(buf, offset);
         pwm_value = detail::readLE<bool>(buf, offset);
-        timestamped_angle = detail::readLE<bool>(buf, offset);
     }
 
     bool operator==(const odo_broadcast_flags_t &other)
     {
         return (angle == other.angle) && (speed == other.speed) &&
-               (pwm_value == other.pwm_value) && (timestamped_angle == other.timestamped_angle);
+               (pwm_value == other.pwm_value);
     }
     bool operator!=(const odo_broadcast_flags_t &other)
     {
@@ -79,7 +76,6 @@ struct odo_broadcast_flags_t
         angle |= rhs.angle;
         speed |= rhs.speed;
         pwm_value |= rhs.pwm_value;
-        timestamped_angle |= rhs.timestamped_angle;
         return *this;
     }
 };
@@ -182,93 +178,24 @@ struct timestamped_angle_t
 
 struct odometry_t
 {
-    std::atomic<timestamp_t> timestamp{0};
-    std::atomic<angle_t> angle{0};
-    std::atomic<angularvelocity_t> angular_velocity{0};
-
-    constexpr static size_t size = sizeof(timestamp_t) + sizeof(angle_t) + sizeof(angularvelocity_t);
-
-    std::vector<uint8_t> to_bytes() const
-    {
-        std::vector<uint8_t> buf;
-        buf.reserve(size);
-        detail::appendLE(buf, timestamp.load());
-        detail::appendLE(buf, angle.load());
-        detail::appendLE(buf, angular_velocity.load());
-        return buf;
-    }
-
-    void from_bytes(const std::vector<uint8_t> &buf, size_t &offset)
-    {
-        timestamp.store(detail::readLE<timestamp_t>(buf, offset));
-        angle.store(detail::readLE<angle_t>(buf, offset));
-        angular_velocity.store(detail::readLE<angularvelocity_t>(buf, offset));
-    }
-
-    // Default constructor
-    odometry_t() = default;
-
-    // Move constructor
-    odometry_t(odometry_t &&other) noexcept
-    {
-        timestamp.store(other.timestamp.load());
-        angle.store(other.angle.load());
-        angular_velocity.store(other.angular_velocity.load());
-    }
-
-    // Move assignment
-    odometry_t &operator=(odometry_t &&other) noexcept
-    {
-        if (this != &other)
-        {
-            timestamp.store(other.timestamp.load());
-            angle.store(other.angle.load());
-            angular_velocity.store(other.angular_velocity.load());
-        }
-        return *this;
-    }
-};
-
-struct setpoint_t
-{
-    std::atomic<angle_t> angle{0};
-    std::atomic<angularvelocity_t> rpm{0};
+    angle_t angle{0};
+    angularvelocity_t angular_velocity{0};
 
     constexpr static size_t size = sizeof(angle_t) + sizeof(angularvelocity_t);
 
-    setpoint_t() = default;
-
-    // Move constructor
-    setpoint_t(setpoint_t &&other) noexcept
-    {
-        angle.store(other.angle.load(std::memory_order_relaxed));
-        rpm.store(other.rpm.load(std::memory_order_relaxed));
-    }
-
-    // Move assignment operator
-    setpoint_t &operator=(setpoint_t &&other) noexcept
-    {
-        if (this != &other)
-        {
-            angle.store(other.angle.load(std::memory_order_relaxed));
-            rpm.store(other.rpm.load(std::memory_order_relaxed));
-        }
-        return *this;
-    }
-
     std::vector<uint8_t> to_bytes() const
     {
         std::vector<uint8_t> buf;
         buf.reserve(size);
-        detail::appendLE(buf, angle.load());
-        detail::appendLE(buf, rpm.load());
+        detail::appendLE(buf, angle);
+        detail::appendLE(buf, angular_velocity);
         return buf;
     }
 
     void from_bytes(const std::vector<uint8_t> &buf, size_t &offset)
     {
-        angle.store(detail::readLE<angle_t>(buf, offset));
-        rpm.store(detail::readLE<angularvelocity_t>(buf, offset));
+        angle = detail::readLE<angle_t>(buf, offset);
+        angular_velocity = detail::readLE<angularvelocity_t>(buf, offset);
     }
 };
 
@@ -321,56 +248,15 @@ struct wheel_data_t
     pid_constants_t anglePIDConstants;
     pid_constants_t speedPIDConstants;
     connections_wheel_t motorConnections;
-    odometry_t odometryData;
-    setpoint_t setpoint;
+    float setpoint;
     odo_broadcast_flags_t odoBroadcastStatus;
-    wheel_update_frequencies_t updateFrequenciesWheel;
     float radians_per_tick = 1.0f;
-    std::atomic<pwmvalue_t> pwmValue{0};
 
     constexpr static size_t size = sizeof(motor_id) + sizeof(control_mode) +
                                    pid_constants_t::size * 2 + connections_wheel_t::size +
-                                   odometry_t::size + setpoint_t::size +
+                                   odometry_t::size + sizeof(setpoint) +
                                    odo_broadcast_flags_t::size + wheel_update_frequencies_t::size +
-                                   sizeof(radians_per_tick) + sizeof(pwmValue);
-
-    wheel_data_t() = default;
-
-    // Move constructor
-    wheel_data_t(wheel_data_t &&other) noexcept
-        : motor_id(other.motor_id),
-          control_mode(std::move(other.control_mode)),
-          anglePIDConstants(std::move(other.anglePIDConstants)),
-          speedPIDConstants(std::move(other.speedPIDConstants)),
-          motorConnections(std::move(other.motorConnections)),
-          odometryData(std::move(other.odometryData)),
-          setpoint(std::move(other.setpoint)),
-          odoBroadcastStatus(std::move(other.odoBroadcastStatus)),
-          updateFrequenciesWheel(std::move(other.updateFrequenciesWheel)),
-          radians_per_tick(other.radians_per_tick)
-    {
-        pwmValue.store(other.pwmValue.load(std::memory_order_relaxed));
-    }
-
-    // Move assignment operator
-    wheel_data_t &operator=(wheel_data_t &&other) noexcept
-    {
-        if (this != &other)
-        {
-            motor_id = other.motor_id;
-            control_mode = std::move(other.control_mode);
-            anglePIDConstants = std::move(other.anglePIDConstants);
-            speedPIDConstants = std::move(other.speedPIDConstants);
-            motorConnections = std::move(other.motorConnections);
-            odometryData = std::move(other.odometryData);
-            setpoint = std::move(other.setpoint);
-            odoBroadcastStatus = std::move(other.odoBroadcastStatus);
-            updateFrequenciesWheel = std::move(other.updateFrequenciesWheel);
-            radians_per_tick = other.radians_per_tick;
-            pwmValue.store(other.pwmValue.load(std::memory_order_relaxed));
-        }
-        return *this;
-    }
+                                   sizeof(radians_per_tick);
 
     std::vector<uint8_t> to_bytes() const
     {
@@ -385,16 +271,10 @@ struct wheel_data_t
         buf.insert(buf.end(), s.begin(), s.end());
         auto c = motorConnections.to_bytes();
         buf.insert(buf.end(), c.begin(), c.end());
-        auto o = odometryData.to_bytes();
-        buf.insert(buf.end(), o.begin(), o.end());
-        auto sp = setpoint.to_bytes();
-        buf.insert(buf.end(), sp.begin(), sp.end());
+        detail::appendLE(buf, setpoint);
         auto f = odoBroadcastStatus.to_bytes();
         buf.insert(buf.end(), f.begin(), f.end());
-        auto uf = updateFrequenciesWheel.to_bytes();
-        buf.insert(buf.end(), uf.begin(), uf.end());
         detail::appendLE(buf, radians_per_tick);
-        detail::appendLE(buf, pwmValue.load());
         return buf;
     }
 
@@ -405,31 +285,31 @@ struct wheel_data_t
         anglePIDConstants.from_bytes(buf, offset);
         speedPIDConstants.from_bytes(buf, offset);
         motorConnections.from_bytes(buf, offset);
-        odometryData.from_bytes(buf, offset);
-        setpoint.from_bytes(buf, offset);
+        setpoint = detail::readLE<float>(buf, offset);
         odoBroadcastStatus.from_bytes(buf, offset);
-        updateFrequenciesWheel.from_bytes(buf, offset);
         radians_per_tick = detail::readLE<float>(buf, offset);
-        pwmValue.store(detail::readLE<pwmvalue_t>(buf, offset));
     }
 };
 
 struct update_frequencies_t
 {
-    frequency_t interfaceRun = 50;
+    frequency_t control_run_frequency = 100;
+    frequency_t odoBroadcastFrequency = 50;
 
-    constexpr static size_t size = sizeof(frequency_t);
+    constexpr static size_t size = sizeof(frequency_t) * 2;
 
     std::vector<uint8_t> to_bytes() const
     {
         std::vector<uint8_t> buf;
         buf.reserve(size);
-        detail::appendLE(buf, interfaceRun);
+        detail::appendLE(buf, control_run_frequency);
+        detail::appendLE(buf, odoBroadcastFrequency);
         return buf;
     }
     void from_bytes(const std::vector<uint8_t> &buf, size_t &offset)
     {
-        interfaceRun = detail::readLE<frequency_t>(buf, offset);
+        control_run_frequency = detail::readLE<frequency_t>(buf, offset);
+        odoBroadcastFrequency = detail::readLE<frequency_t>(buf, offset);
     }
 };
 
@@ -438,7 +318,6 @@ struct controller_properties_t
     bool run = false;
     uint8_t numMotors = 0;
     odo_broadcast_flags_t odoBroadcastStatus;
-    frequency_t odoBroadcastFrequency = 30;
     update_frequencies_t updateFrequencies;
 
     constexpr static size_t size = sizeof(bool) + sizeof(uint8_t) +
@@ -452,7 +331,6 @@ struct controller_properties_t
         detail::appendLE(buf, numMotors);
         auto f = odoBroadcastStatus.to_bytes();
         buf.insert(buf.end(), f.begin(), f.end());
-        detail::appendLE(buf, odoBroadcastFrequency);
         auto uf = updateFrequencies.to_bytes();
         buf.insert(buf.end(), uf.begin(), uf.end());
         return buf;
@@ -462,7 +340,6 @@ struct controller_properties_t
         run = detail::readLE<bool>(buf, offset);
         numMotors = detail::readLE<uint8_t>(buf, offset);
         odoBroadcastStatus.from_bytes(buf, offset);
-        odoBroadcastFrequency = detail::readLE<frequency_t>(buf, offset);
         updateFrequencies.from_bytes(buf, offset);
     }
 };
@@ -499,6 +376,12 @@ struct controller_data_t
     }
 };
 
+enum class PIDType : uint8_t
+{
+    POSITION = 0,
+    VELOCITY = 1
+};
+
 struct WheelTaskHandles
 {
     TaskHandle_t wheel_run_task_handle;
@@ -523,10 +406,3 @@ struct TaskHandles
  *  @brief Defines notification messages for the motor controller.
  *  @{
  */
-
-/** Wheel run task notifications */
-#define CONTROL_MODE_UPDATE (1 << 0)
-#define ODO_BROADCAST_STATUS_UPDATE (1 << 1)
-#define PID_CONSTANTS_UPDATE (1 << 2)
-
-/** @} */ // end of notifications

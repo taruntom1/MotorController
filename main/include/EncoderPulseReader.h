@@ -4,7 +4,8 @@
 #include "driver/pulse_cnt.h"
 #include "esp_log.h"
 #include "esp_err.h"
-#include "esp_timer.h"
+#include "hal/cpu_hal.h"
+#include "esp_rom_sys.h"
 #include "MyStructs.h"
 
 /**
@@ -66,8 +67,9 @@ private:
     pcnt_config_t *_pcnt_config;               /**< Pointer to the configuration structure for PCNT. */
     pcnt_unit_handle_t pcnt_unit = NULL;       /**< Handle for the PCNT unit. */
     pcnt_channel_handle_t pcnt_channel = NULL; /**< Handle for the PCNT channel. */
+    float inverse_cycles_per_sec;              /**< Cycles per microsecond of processor. */
     int previous_count = 0;                    /**< Previous pulse count for velocity calculation. */
-    uint64_t previous_time_us = 0;              /**< Previous timestamp for velocity calculation. */
+    uint64_t previous_cpu_cycles = 0;          /**< Previous timestamp for velocity calculation. */
 
 public:
     /**
@@ -116,12 +118,7 @@ public:
      */
     encoder_tickrate_t get_tickrate();
 
-    encoder_ticks_t get_ticks(timestamp_t &timestamp);
-    encoder_tickrate_t get_tickrate(timestamp_t &timestamp);
-    void get_tick_tickrate(encoder_ticks_t &ticks, encoder_tickrate_t &tickrate, timestamp_t &timestamp);
-
-
-
+    void get_tick_tickrate(encoder_ticks_t &ticks, encoder_tickrate_t &tickrate);
 };
 
 /** @} */ // End of EncoderPulseReaderModule
