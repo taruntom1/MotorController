@@ -57,7 +57,7 @@ encoder_tickrate_t EncoderPulseReader::get_tickrate()
     int current_count;
     pcnt_unit_get_count(pcnt_unit, &current_count);
 
-    uint32_t current_cpu_cycles = cpu_hal_get_cycle_count();
+    uint32_t current_cpu_cycles = esp_cpu_get_cycle_count();
     float delta_time_us = static_cast<float>(current_cpu_cycles - previous_cpu_cycles) * inverse_cycles_per_sec;
 
     encoder_tickrate_t tickrate = static_cast<float>(current_count - previous_count) / delta_time_us;
@@ -72,7 +72,7 @@ void EncoderPulseReader::get_tick_tickrate(encoder_ticks_t &ticks, encoder_tickr
 {
     pcnt_unit_get_count(pcnt_unit, &ticks);
 
-    uint32_t current_cpu_cycles = cpu_hal_get_cycle_count();
+    uint32_t current_cpu_cycles = esp_cpu_get_cycle_count();
     float delta_time_us = static_cast<float>(current_cpu_cycles - previous_cpu_cycles) * inverse_cycles_per_sec;
 
     tickrate = static_cast<float>(ticks - previous_count) / delta_time_us;

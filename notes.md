@@ -8,8 +8,10 @@ first 10 bits are for checking for wheel data update
 
 # Improvements to make
 ## communicationInterface
-    - only run run task when needed.
-    - make the run task implementation similar to managewheels
+    - 
 
 ## mpu 6050 reader
     - remove shared data pointer and use local variable instead.
+
+## struct serialiation
+    - use std::array instead of std::vector

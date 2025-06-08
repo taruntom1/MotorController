@@ -1,31 +1,23 @@
 #include "ControlInterface.h"
 #include "esp_log.h"
-#include "print.h"
 #include <string.h>
 
 #define LOG_LOCAL_LEVEL ESP_LOG_DEBUG // Set local log level for this file
 
 static const char *TAG = "ControlInterface";
 
-ControlInterface::ControlInterface(protocol_config &config)
+ControlInterface::ControlInterface(protocol_config config)
     : protocol(config)
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Initializing control interface");
     protocol.begin();
-    initMotorData();
-
-    // Initialize the run loop delay
-    runLoopDelay = 1000 / controllerData.controllerProperties.updateFrequencies.interfaceRun;
 
     protocol.onCommandReceived = [this](Command command)
     {
         this->CallFunction(command);
     };
 
-    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Starting Control interface run task");
-    xTaskCreate([](void *param)
-                { static_cast<ControlInterface *>(param)->Run(); },
-                "Communication Interface", 4096, this, 5, &taskHandles.interface_task_handles.Run);
+    cacheVctr.reserve(100);
 }
 
 void ControlInterface::Ping()
@@ -37,90 +29,92 @@ void ControlInterface::Ping()
 void ControlInterface::start()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Starting motor controller");
-    controllerData.controllerProperties.run = true;
+    ControllerRunCallback(true);
     protocol.SendCommand(Command::READ_SUCCESS);
 }
 void ControlInterface::stop()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Stopping motor controller");
-    controllerData.controllerProperties.run = false;
+    ControllerRunCallback(false);
     protocol.SendCommand(Command::READ_SUCCESS);
 }
 
 bool ControlInterface::GetControllerProperties()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Reading controller properties");
-    vector<uint8_t> data = protocol.ReadData(controller_properties_t::size, 1000);
+    std::vector<uint8_t> data = protocol.ReadData(controller_properties_t::size, 1000);
     if (unlikely(data.empty()))
     {
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Controller properties read failed");
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Controller properties read failed");
         protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
 
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Controller properties read successfully");
     size_t offset = 0;
-    controllerData.controllerProperties.from_bytes(data, offset);
-    if (likely(initMotorData()))
-    {
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Motor data initialized successfully");
-        protocol.SendCommand(Command::READ_SUCCESS);
-        runLoopDelay = 1000 / controllerData.controllerProperties.updateFrequencies.interfaceRun;
-        return true;
-    }
-    else
-    {
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Motor data initialization failed");
-        protocol.SendCommand(Command::READ_FAILURE);
-        return false;
-    }
+    controller_properties_t properties;
+    properties.from_bytes(data, offset);
+
+    wheel_count = properties.numMotors;
+    odo_broadcast_flags.resize(wheel_count);
+
+    ControllerPropertiesCallback(properties);
+    protocol.SendCommand(Command::READ_SUCCESS);
+    return true;
 }
 
-bool ControlInterface::GetMotorData()
+bool ControlInterface::GetWheelData()
 {
-    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Getting motor data...");
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Getting motor data...");
     constexpr size_t dataSize = sizeof(uint8_t) + wheel_data_t::size;
     size_t offset = 1;
 
     std::vector<uint8_t> buffer = protocol.ReadData(dataSize, 1000);
     if (unlikely(buffer.empty()))
     {
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Motor data read failed: not enough data received");
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Motor data read failed");
         protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
 
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Motor ID and Motor Data received");
     uint8_t motorID = buffer[0];
-    if (unlikely(motorID >= controllerData.controllerProperties.numMotors))
+    if (unlikely(motorID >= wheel_count))
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Motor ID out of range");
         protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
 
-    controllerData.wheelData.at(motorID).from_bytes(buffer, offset);
+    wheel_data_t wheelData;
+    wheelData.from_bytes(buffer, offset);
+
+    assert(wheelData.motor_id == motorID);
+
+    WheelDataCallback(wheelData);
+
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Motor data read successful for motor ID %d", motorID);
     protocol.SendCommand(Command::READ_SUCCESS);
-
-    // Sending notification to motor manager task to construct Wheels
-    xTaskNotify(taskHandles.wheel_manager, (1 << motorID), eSetBits);
-
     return true;
 }
 
 void ControlInterface::stopAllBroadcast()
 {
-    controllerData.controllerProperties.odoBroadcastStatus = odo_broadcast_flags_t{0, 0, 0, 0};
+    OdoBroadcastCallbackBlocking(TaskAction::Suspend);
+    protocol.SendCommand(Command::READ_SUCCESS);
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "All broadcasts stopped");
 }
 
 void ControlInterface::restoreAllBroadcast()
 {
-    for (auto &wheel_data : controllerData.wheelData)
-    {
-        controllerData.controllerProperties.odoBroadcastStatus |= wheel_data.odoBroadcastStatus;
-    }
+    // for (auto &flag : odo_broadcast_flags)
+    // {
+    //     odo_broadcast_flag |= flag;
+    // }
+    // if (odo_broadcast_flag.angle || odo_broadcast_flag.speed || odo_broadcast_flag.pwm_value)
+    OdoBroadcastCallbackBlocking(TaskAction::Resume);
+    protocol.SendCommand(Command::READ_SUCCESS);
+
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "All broadcasts restored");
 }
 
@@ -138,7 +132,7 @@ bool ControlInterface::GetOdoBroadcastStatus()
     }
 
     uint8_t motorID = buffer[0];
-    if (unlikely(motorID >= controllerData.wheelData.size()))
+    if (unlikely(motorID >= wheel_count))
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Motor ID out of range");
         protocol.SendCommand(Command::READ_FAILURE);
@@ -147,18 +141,22 @@ bool ControlInterface::GetOdoBroadcastStatus()
 
     size_t offset = 1;
 
-    controllerData.wheelData[motorID].odoBroadcastStatus.from_bytes(buffer, offset);
+    odo_broadcast_flags[motorID].from_bytes(buffer, offset);
     protocol.SendCommand(Command::READ_SUCCESS);
-    xTaskNotify(taskHandles.wheel_task_handles[motorID].wheel_run_task_handle, ODO_BROADCAST_STATUS_UPDATE, eSetBits);
 
     // Update aggregated broadcast status
-    odo_broadcast_flags_t &aggregatedStatus = controllerData.controllerProperties.odoBroadcastStatus;
+    odo_broadcast_flags_t &aggregatedStatus = odo_broadcast_flag;
     memset(&aggregatedStatus, 0, sizeof(odo_broadcast_flags_t));
 
-    for (wheel_data_t &wheel : controllerData.wheelData)
+    for (auto &odoBroadcastStatus : odo_broadcast_flags)
     {
-        aggregatedStatus |= wheel.odoBroadcastStatus;
+        aggregatedStatus |= odoBroadcastStatus;
     }
+
+    if (odo_broadcast_flag.angle || odo_broadcast_flag.speed || odo_broadcast_flag.pwm_value)
+        OdoBroadcastCallbackNonBlocking(TaskAction::Start);
+    else
+        OdoBroadcastCallbackNonBlocking(TaskAction::Stop);
 
     return true;
 }
@@ -179,32 +177,23 @@ bool ControlInterface::GetPIDConstants()
     size_t offset = 2;
 
     // Validate motor ID
-    if (unlikely(motorID >= controllerData.wheelData.size()))
+    if (unlikely((motorID >= wheel_count) || pidType >= 2))
     {
         protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
+
+    pid_constants_t constants;
+    constants.from_bytes(buffer, offset);
 
     // Store PID constants
-    switch (pidType)
-    {
-    case 0:
-        controllerData.wheelData[motorID].anglePIDConstants.from_bytes(buffer, offset);
-        break;
-    case 1:
-        controllerData.wheelData[motorID].speedPIDConstants.from_bytes(buffer, offset);
-        break;
-    default:
-        protocol.SendCommand(Command::READ_FAILURE);
-        return false;
-    }
+    PIDConstantsCallback(motorID, static_cast<PIDType>(pidType), constants);
 
-    xTaskNotify(taskHandles.wheel_task_handles[motorID].wheel_run_task_handle, PID_CONSTANTS_UPDATE, eSetBits);
     protocol.SendCommand(Command::READ_SUCCESS);
     return true;
 }
 
-bool ControlInterface::GetMotorControlMode()
+bool ControlInterface::GetWheelControlMode()
 {
     constexpr size_t buffer_size = sizeof(uint8_t) + sizeof(ControlMode);
     std::vector<uint8_t> buffer(protocol.ReadData(buffer_size, 1000));
@@ -216,136 +205,91 @@ bool ControlInterface::GetMotorControlMode()
 
     uint8_t &motorID = buffer[0];
     size_t offset = 1;
-    if (unlikely(motorID >= controllerData.wheelData.size()))
+    if (unlikely(motorID >= wheel_count))
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Invalid motor ID %d", motorID);
         return false;
     }
-
-    from_bytes(controllerData.wheelData[motorID].control_mode, buffer, offset);
-    xTaskNotify(taskHandles.wheel_task_handles[motorID].wheel_run_task_handle, CONTROL_MODE_UPDATE, eSetBits);
-
+    ControlMode control_mode;
+    from_bytes(control_mode, buffer, offset);
+    WheelControlModeCallback(motorID, control_mode);
     protocol.SendCommand(Command::READ_SUCCESS);
     return true;
 }
 
-bool ControlInterface::GetMotorSpeedSetpoints()
+bool ControlInterface::GetMotorSetpoints()
 {
-    const uint8_t motorCount = controllerData.wheelData.size();
-    angularvelocity_t motorRPMs[motorCount];
-
-    if (!protocol.ReadData(reinterpret_cast<uint8_t *>(motorRPMs), sizeof(motorRPMs)))
+    std::vector<float> setpoints(wheel_count);
+    if (protocol.ReadData(reinterpret_cast<uint8_t *>(setpoints.data()), sizeof(float) * wheel_count))
     {
-        return false;
+        WheelSetpointCallback(setpoints);
+        return true;
     }
 
-    for (uint8_t i = 0; i < motorCount; i++)
-    {
-        controllerData.wheelData[i].setpoint.rpm.store(motorRPMs[i]);
-    }
-
-    return true;
+    return false;
 }
 
-bool ControlInterface::GetMotorAngleSetpoints()
+void ControlInterface::SendOdoData(const std::pair<timestamp_t, std::vector<odometry_t>> &odo_data)
 {
-    const uint8_t motorCount = controllerData.wheelData.size();
-    angle_t motorAngles[motorCount];
+    const bool speedBroadcast = odo_broadcast_flag.speed;
+    const bool angleBroadcast = odo_broadcast_flag.angle;
+    const bool pwmBroadcast = odo_broadcast_flag.pwm_value;
 
-    if (!protocol.ReadData(reinterpret_cast<uint8_t *>(motorAngles), sizeof(motorAngles)))
-    {
-        return false;
-    }
-
-    for (uint8_t i = 0; i < motorCount; i++)
-    {
-        controllerData.wheelData[i].setpoint.angle.store(motorAngles[i]);
-    }
-    return true;
-}
-
-bool ControlInterface::GetMotorPWMs()
-{
-    const uint8_t motorCount = controllerData.wheelData.size();
-    pwmvalue_t pwmValues[motorCount];
-
-    if (!protocol.ReadData(reinterpret_cast<uint8_t *>(pwmValues), sizeof(pwmValues)))
-    {
-        return false;
-    }
-
-    for (uint8_t i = 0; i < motorCount; i++)
-    {
-        controllerData.wheelData[i].pwmValue.store(pwmValues[i]);
-    }
-
-    return true;
-}
-
-void ControlInterface::SendOdoData()
-{
-    const bool speedBroadcast = controllerData.controllerProperties.odoBroadcastStatus.speed;
-    const bool angleBroadcast = controllerData.controllerProperties.odoBroadcastStatus.angle;
-    const bool pwmBroadcast = controllerData.controllerProperties.odoBroadcastStatus.pwm_value;
-    const bool timestampedAngleBroadcast = controllerData.controllerProperties.odoBroadcastStatus.timestamped_angle;
-
-    if (!speedBroadcast && !angleBroadcast && !pwmBroadcast && !timestampedAngleBroadcast)
+    if (!speedBroadcast && !angleBroadcast && !pwmBroadcast)
         return;
 
-    const uint8_t header[] = {0xaa, 0xaa, 0xaa};
-    const size_t numMotors = controllerData.controllerProperties.numMotors;
+    constexpr uint8_t flag_index = 4;
+    constexpr uint8_t header_and_command[] = {0xaa, 0xaa, 0xaa,
+                                              static_cast<uint8_t>(Command::SEND_ODOMETRY)};
+    constexpr size_t baseHeaderSize = sizeof(header_and_command) + 1;
+    constexpr size_t timestampSize = sizeof(timestamp_t);
+    const size_t angleBlockSize = angleBroadcast ? (sizeof(angle_t) * wheel_count) : 0;
+    const size_t speedBlockSize = speedBroadcast ? (sizeof(angularvelocity_t) * wheel_count) : 0;
+    const size_t pwmBlockSize = pwmBroadcast ? (sizeof(pwmvalue_t) * wheel_count) : 0;
 
-    const size_t angleBlockSize = angleBroadcast ? (4 + sizeof(angle_t) * numMotors) : 0;
-    const size_t speedBlockSize = speedBroadcast ? (4 + sizeof(angularvelocity_t) * numMotors) : 0;
-    const size_t pwmBlockSize = pwmBroadcast ? (4 + sizeof(pwmvalue_t) * numMotors) : 0;
-    const size_t timestampedAngleBlockSize = timestampedAngleBroadcast ? (4 + sizeof(timestamped_angle_t) * numMotors) : 0;
+    const size_t totalSize = angleBlockSize + speedBlockSize +
+                             pwmBlockSize + timestampSize + baseHeaderSize;
+    cacheVctr.resize(totalSize);
 
-    const size_t totalSize = angleBlockSize + speedBlockSize + pwmBlockSize + timestampedAngleBlockSize;
-    std::vector<uint8_t> data(totalSize);
+    uint8_t *ptr = cacheVctr.data();
 
-    uint8_t *ptr = data.data();
+    memcpy(ptr, header_and_command, sizeof(header_and_command));
+    ptr[flag_index] = (angleBroadcast << 0) | (speedBroadcast << 1) | (pwmBroadcast << 2);
 
-    auto write_block = [&](bool enabled, Command cmd, auto get_value, size_t typeSize)
+    ptr += baseHeaderSize;
+    memcpy(ptr, &odo_data.first, timestampSize);
+    ptr += timestampSize;
+
+    for (const auto &data : odo_data.second)
     {
-        if (!enabled)
-            return;
-
-        memcpy(ptr, header, sizeof(header));
-        ptr[3] = static_cast<uint8_t>(cmd);
-        ptr += 4;
-
-        for (const auto &wheel : controllerData.wheelData)
+        if (angleBroadcast)
         {
-            auto value = get_value(wheel);
-            memcpy(ptr, &value, typeSize);
-            ptr += typeSize;
+            memcpy(ptr, &data.angle, sizeof(float));
+            ptr += sizeof(float);
         }
-    };
+        if (speedBroadcast)
+        {
+            memcpy(ptr, &data.angular_velocity, sizeof(float));
+            ptr += sizeof(float);
+        }
+        if (pwmBroadcast)
+        {
+            memcpy(ptr, &data.pwm_value, sizeof(float));
+            ptr += sizeof(float);
+        }
+    }
 
-    write_block(angleBroadcast, Command::SEND_ODO_ANGLES, [](const auto &w)
-                { return w.odometryData.angle.load(); }, sizeof(angle_t));
-
-    write_block(speedBroadcast, Command::SEND_ODO_SPEEDS, [](const auto &w)
-                { return w.odometryData.angular_velocity.load(); }, sizeof(angularvelocity_t));
-
-    write_block(pwmBroadcast, Command::SEND_ODO_PWMS, [](const auto &w)
-                { return w.pwmValue.load(); }, sizeof(pwmvalue_t));
-
-    write_block(timestampedAngleBroadcast, Command::SEND_ODO_TIMESTAMPED_ANGLES, [](const auto &w)
-                { timestamped_angle_t timestampedAngle = {w.odometryData.timestamp.load(), w.odometryData.angle.load()};
-                    return timestampedAngle; }, sizeof(timestamped_angle_t));
-
-    protocol.SendData(data);
+    protocol.SendData(cacheVctr);
 }
 
-bool ControlInterface::SendControllerProperties()
+/* bool ControlInterface::SendControllerProperties()
 {
     protocol.SendCommand(Command::GET_CONTROLLER_PROPERTIES);
     protocol.SendData(controllerData.controllerProperties.to_bytes());
     return true;
 }
 
-bool ControlInterface::SendMotorData()
+bool ControlInterface::SendWheelData()
 {
     uint8_t motorID = 0;
     protocol.ReadData((uint8_t *)&motorID, sizeof(motorID));
@@ -360,7 +304,7 @@ bool ControlInterface::SendMotorData()
     protocol.SendData((uint8_t *)&motorID, sizeof(motorID));
     protocol.SendData(controllerData.wheelData[motorID].to_bytes());
     return true;
-}
+} */
 
 void ControlInterface::CallFunction(Command commandType)
 {
@@ -371,16 +315,10 @@ void ControlInterface::CallFunction(Command commandType)
         handleTimeSyncRequest(&protocol);
         break;
     case Command::SET_MOTOR_CONTROL_MODES:
-        GetMotorControlMode();
+        GetWheelControlMode();
         break;
-    case Command::SET_MOTOR_SPEED_SETPOINTS:
-        GetMotorSpeedSetpoints();
-        break;
-    case Command::SET_MOTOR_ANGLE_SETPOINTS:
-        GetMotorAngleSetpoints();
-        break;
-    case Command::SET_MOTOR_PWMS:
-        GetMotorPWMs();
+    case Command::SET_WHEEL_SETPOINT:
+        GetMotorSetpoints();
         break;
     case Command::PING:
         Ping();
@@ -399,7 +337,7 @@ void ControlInterface::CallFunction(Command commandType)
         break;
 
     case Command::SET_MOTOR_DATA:
-        GetMotorData();
+        GetWheelData();
         break;
 
     case Command::STOP_ALL_BROADCAST:
@@ -416,17 +354,6 @@ void ControlInterface::CallFunction(Command commandType)
 
     case Command::SET_ODO_BROADCAST_STATUS:
         GetOdoBroadcastStatus();
-        break;
-
-    case Command::GET_MOTOR_DATA:
-        if (SendMotorData())
-            ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Motor data send successfully");
-        else
-            ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to sent motor data");
-
-        break;
-    case Command::GET_CONTROLLER_PROPERTIES:
-        SendControllerProperties();
         break;
 
     default:

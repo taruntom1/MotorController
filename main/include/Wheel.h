@@ -29,7 +29,7 @@ class Wheel
 {
 public:
     // Constructor & Destructor
-    Wheel(wheel_data_t *wheel_data);
+    Wheel(wheel_data_t *wheel_data, TickType_t control_loop_delay_ticks);
 
     ~Wheel();
 
@@ -46,11 +46,10 @@ public:
     odometry_t getOdometry();
 
     void updateControlMode(ControlMode mode);
-
-    void updateControlLoop();
-
-    void updateSetpoint(float setpoint);
+    void updateLoopDelay(TickType_t delay_ticks);
     void updatePIDConstants(PIDType type, pid_constants_t &pid_constants);
+    void updateSetpoint(float setpoint);
+    void updateControlLoop();
 
 private:
     // Logger Tag
@@ -65,12 +64,12 @@ private:
     pid_constants_t anglePIDConstants;
     pid_constants_t speedPIDConstants;
     connections_wheel_t motorConnections;
-    wheel_update_frequencies_t updateFrequenciesWheel;
     odo_broadcast_flags_t odoBroadcastStatus;
     std::atomic<angle_t> angle_odom{0};
     std::atomic<angularvelocity_t> angular_velocity_odom{0};
     std::atomic<float> setpoint_atomic{0};
     float radians_per_tick = 1.0f;
+    uint16_t control_loop_delay_ms;
     std::atomic<pwmvalue_t> pwm_value_atomic{0};
 
     // Motor and Encoder
@@ -84,7 +83,7 @@ private:
     std::unique_ptr<PID<float>> pid;
 
     // State flags
-    std::atomic<bool> pid_const_update{false};
+    std::atomic<bool> pid_property_update{false};
 
     // data
     float setpoint;

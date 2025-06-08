@@ -38,9 +38,9 @@ namespace detail
 
 struct odo_broadcast_flags_t
 {
-    bool angle = false;
-    bool speed = false;
-    bool pwm_value = false;
+    bool angle;
+    bool speed;
+    bool pwm_value;
 
     constexpr static size_t size = sizeof(angle) + sizeof(speed) +
                                    sizeof(pwm_value);
@@ -82,9 +82,9 @@ struct odo_broadcast_flags_t
 
 struct pid_constants_t
 {
-    float p = 0;
-    float i = 0;
-    float d = 0;
+    float p;
+    float i;
+    float d;
 
     constexpr static size_t size = sizeof(p) + sizeof(i) + sizeof(d);
 
@@ -180,8 +180,9 @@ struct odometry_t
 {
     angle_t angle{0};
     angularvelocity_t angular_velocity{0};
+    pwmvalue_t pwm_value{0};
 
-    constexpr static size_t size = sizeof(angle_t) + sizeof(angularvelocity_t);
+    constexpr static size_t size = sizeof(angle_t) + sizeof(angularvelocity_t) + sizeof(pwmvalue_t);
 
     std::vector<uint8_t> to_bytes() const
     {
@@ -189,6 +190,7 @@ struct odometry_t
         buf.reserve(size);
         detail::appendLE(buf, angle);
         detail::appendLE(buf, angular_velocity);
+        detail::appendLE(buf, pwm_value);
         return buf;
     }
 
@@ -196,6 +198,7 @@ struct odometry_t
     {
         angle = detail::readLE<angle_t>(buf, offset);
         angular_velocity = detail::readLE<angularvelocity_t>(buf, offset);
+        pwm_value = detail::readLE<pwmvalue_t>(buf, offset);
     }
 };
 
@@ -243,20 +246,17 @@ inline void from_bytes(ControlMode &m, const std::vector<uint8_t> &buf, size_t &
 
 struct wheel_data_t
 {
-    uint8_t motor_id = 0;
-    ControlMode control_mode = ControlMode::PWM_DIRECT_CONTROL;
+    uint8_t motor_id;
+    ControlMode control_mode;
     pid_constants_t anglePIDConstants;
     pid_constants_t speedPIDConstants;
     connections_wheel_t motorConnections;
-    float setpoint;
     odo_broadcast_flags_t odoBroadcastStatus;
-    float radians_per_tick = 1.0f;
+    float radians_per_tick;
 
     constexpr static size_t size = sizeof(motor_id) + sizeof(control_mode) +
                                    pid_constants_t::size * 2 + connections_wheel_t::size +
-                                   odometry_t::size + sizeof(setpoint) +
-                                   odo_broadcast_flags_t::size + wheel_update_frequencies_t::size +
-                                   sizeof(radians_per_tick);
+                                   odo_broadcast_flags_t::size + sizeof(radians_per_tick);
 
     std::vector<uint8_t> to_bytes() const
     {
@@ -271,7 +271,6 @@ struct wheel_data_t
         buf.insert(buf.end(), s.begin(), s.end());
         auto c = motorConnections.to_bytes();
         buf.insert(buf.end(), c.begin(), c.end());
-        detail::appendLE(buf, setpoint);
         auto f = odoBroadcastStatus.to_bytes();
         buf.insert(buf.end(), f.begin(), f.end());
         detail::appendLE(buf, radians_per_tick);
@@ -285,7 +284,6 @@ struct wheel_data_t
         anglePIDConstants.from_bytes(buf, offset);
         speedPIDConstants.from_bytes(buf, offset);
         motorConnections.from_bytes(buf, offset);
-        setpoint = detail::readLE<float>(buf, offset);
         odoBroadcastStatus.from_bytes(buf, offset);
         radians_per_tick = detail::readLE<float>(buf, offset);
     }
@@ -293,8 +291,8 @@ struct wheel_data_t
 
 struct update_frequencies_t
 {
-    frequency_t control_run_frequency = 100;
-    frequency_t odoBroadcastFrequency = 50;
+    frequency_t control_run_frequency;
+    frequency_t odoBroadcastFrequency;
 
     constexpr static size_t size = sizeof(frequency_t) * 2;
 
@@ -315,31 +313,23 @@ struct update_frequencies_t
 
 struct controller_properties_t
 {
-    bool run = false;
-    uint8_t numMotors = 0;
-    odo_broadcast_flags_t odoBroadcastStatus;
+    uint8_t numMotors;
     update_frequencies_t updateFrequencies;
 
-    constexpr static size_t size = sizeof(bool) + sizeof(uint8_t) +
-                                   odo_broadcast_flags_t::size + sizeof(frequency_t) +
+    constexpr static size_t size = sizeof(uint8_t) +
                                    update_frequencies_t::size;
 
     std::vector<uint8_t> to_bytes() const
     {
         std::vector<uint8_t> buf;
-        detail::appendLE(buf, run);
         detail::appendLE(buf, numMotors);
-        auto f = odoBroadcastStatus.to_bytes();
-        buf.insert(buf.end(), f.begin(), f.end());
         auto uf = updateFrequencies.to_bytes();
         buf.insert(buf.end(), uf.begin(), uf.end());
         return buf;
     }
     void from_bytes(const std::vector<uint8_t> &buf, size_t &offset)
     {
-        run = detail::readLE<bool>(buf, offset);
         numMotors = detail::readLE<uint8_t>(buf, offset);
-        odoBroadcastStatus.from_bytes(buf, offset);
         updateFrequencies.from_bytes(buf, offset);
     }
 };

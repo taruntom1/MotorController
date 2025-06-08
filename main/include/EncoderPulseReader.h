@@ -4,9 +4,9 @@
 #include "driver/pulse_cnt.h"
 #include "esp_log.h"
 #include "esp_err.h"
-#include "hal/cpu_hal.h"
-#include "esp_rom_sys.h"
+#include "esp_cpu.h"
 #include "MyStructs.h"
+
 
 /**
  * @defgroup EncoderPulseReaderModule Encoder Pulse Reader

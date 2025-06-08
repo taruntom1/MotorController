@@ -10,11 +10,12 @@ class ControllerManager
 {
 public:
     ControllerManager();
-    static void taskEntry(void *pvParameters);
+
+    void setControllerProperties(const controller_properties_t &controller_properties);
 
 private:
     WheelManager wheel_manager_;
     ControlInterface control_interface_;
 
-    void Task();
+    void connectCallbacks();
 };

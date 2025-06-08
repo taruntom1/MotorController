@@ -2,15 +2,15 @@
 
 #define LOG_LOCAL_LEVEL ESP_LOG_INFO // Set local log level for this file
 
-Wheel::Wheel(wheel_data_t *wheel_data)
+Wheel::Wheel(wheel_data_t *wheel_data, TickType_t control_loop_delay_ticks)
     : wheel_id(wheel_data->motor_id),
       control_mode(wheel_data->control_mode),
       anglePIDConstants(wheel_data->anglePIDConstants),
       speedPIDConstants(wheel_data->speedPIDConstants),
       motorConnections(wheel_data->motorConnections),
-      updateFrequenciesWheel(wheel_data->updateFrequenciesWheel),
       odoBroadcastStatus(wheel_data->odoBroadcastStatus),
-      radians_per_tick(wheel_data->radians_per_tick)
+      radians_per_tick(wheel_data->radians_per_tick),
+      control_loop_delay_ms(pdTICKS_TO_MS(control_loop_delay_ticks))
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Initializing Wheel instance %d", wheel_id);
 
@@ -33,7 +33,7 @@ Wheel::Wheel(Wheel &&other) noexcept
     anglePIDConstants = other.anglePIDConstants;
     speedPIDConstants = other.speedPIDConstants;
     motorConnections = other.motorConnections;
-    updateFrequenciesWheel = other.updateFrequenciesWheel;
+    control_loop_delay_ms = other.control_loop_delay_ms;
     odoBroadcastStatus = other.odoBroadcastStatus;
     angle_odom.store(other.angle_odom.load());
     angular_velocity_odom.store(other.angular_velocity_odom.load());
@@ -49,7 +49,7 @@ Wheel::Wheel(Wheel &&other) noexcept
 
     pid = std::move(other.pid);
 
-    pid_const_update.store(other.pid_const_update.load());
+    pid_property_update.store(other.pid_property_update.load());
 
     setpoint = other.setpoint;
     angle = other.angle;
@@ -68,7 +68,7 @@ Wheel &Wheel::operator=(Wheel &&other) noexcept
         anglePIDConstants = other.anglePIDConstants;
         speedPIDConstants = other.speedPIDConstants;
         motorConnections = other.motorConnections;
-        updateFrequenciesWheel = other.updateFrequenciesWheel;
+        control_loop_delay_ms = other.control_loop_delay_ms;
         odoBroadcastStatus = other.odoBroadcastStatus;
         angle_odom.store(other.angle_odom.load());
         angular_velocity_odom.store(other.angular_velocity_odom.load());
@@ -84,7 +84,7 @@ Wheel &Wheel::operator=(Wheel &&other) noexcept
 
         pid = std::move(other.pid);
 
-        pid_const_update.store(other.pid_const_update.load());
+        pid_property_update.store(other.pid_property_update.load());
 
         setpoint = other.setpoint;
         angle = other.angle;
@@ -101,8 +101,9 @@ odometry_t Wheel::getOdometry()
         refreshOdometry();
     }
 
-    return odometry_t(angle_odom.load(std::memory_order_release),
-                      angular_velocity_odom.load(std::memory_order_release));
+    return odometry_t(angle_odom.load(std::memory_order_acquire),
+                      angular_velocity_odom.load(std::memory_order_acquire),
+                      pwm_value_atomic.load(std::memory_order_acquire));
 }
 
 void Wheel::updateControlMode(ControlMode mode)
@@ -145,12 +146,18 @@ void Wheel::updateControlMode(ControlMode mode)
     }
 }
 
+void Wheel::updateLoopDelay(TickType_t delay_ticks)
+{
+    control_loop_delay_ms = pdTICKS_TO_MS(delay_ticks);
+    pid_property_update.store(true, std::memory_order_release);
+}
+
 void Wheel::updateControlLoop()
 {
     switch (control_mode)
     {
     case ControlMode::PWM_DIRECT_CONTROL:
-        updatePWMDirectControl;
+        updatePWMDirectControl();
         break;
     case ControlMode::POSITION_CONTROL:
         updateAnglePIDControl();
@@ -172,13 +179,13 @@ void Wheel::refreshOdometry()
     angle = static_cast<angle_t>(ticks) * radians_per_tick;
     angular_velocity = static_cast<angularvelocity_t>(tickrate) * radians_per_tick;
 
-    angle_odom.store(angle);
-    angular_velocity_odom.store(angular_velocity);
+    angle_odom.store(angle, std::memory_order_release);
+    angular_velocity_odom.store(angular_velocity, std::memory_order_release);
 }
 
 void Wheel::updateSetpoint(float setpoint)
 {
-    setpoint_atomic.store(setpoint, std::memory_order_relaxed);
+    setpoint_atomic.store(setpoint, std::memory_order_release);
 }
 
 void Wheel::updatePIDConstants(PIDType type, pid_constants_t &pid_constants)
@@ -194,7 +201,7 @@ void Wheel::updatePIDConstants(PIDType type, pid_constants_t &pid_constants)
     default:
         break;
     }
-    pid_const_update.store(true, std::memory_order_acquire);
+    pid_property_update.store(true, std::memory_order_release);
 }
 
 void Wheel::InitMotorDriver()
@@ -232,8 +239,8 @@ void Wheel::initPWMDirect()
 
 void Wheel::updatePWMDirectControl()
 {
-    pwmvalue_t pwm_value = setpoint_atomic.load();
-    pwm_value_atomic.store(pwm_value);
+    pwmvalue_t pwm_value = setpoint_atomic.load(std::memory_order_acquire);
+    pwm_value_atomic.store(pwm_value, std::memory_order_relaxed);
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, "Wheel %d speed set: %.2f", wheel_id, pwm_value);
     motorDriver->setSpeed(pwm_value);
 }
@@ -255,31 +262,32 @@ void Wheel::initAnglePID()
                                        anglePIDConstants.i,
                                        anglePIDConstants.d,
                                        PID<angle_t>::DIRECT,
-                                       1000 / updateFrequenciesWheel.angle_pid);
+                                       control_loop_delay_ms);
     pid->SetMode(PID<float>::AUTOMATIC);
 }
 
 void Wheel::updateAnglePIDControl()
 {
-    setpoint = setpoint_atomic.load(std::memory_order_release);
+    setpoint = setpoint_atomic.load(std::memory_order_acquire);
 
     refreshOdometry();
     pid->Compute();
 
-    pwm_value_atomic.store(pwm);
+    pwm_value_atomic.store(pwm, std::memory_order_relaxed);
     motorDriver->setSpeed(pwm);
 
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, " %d pwm: %.2f RPM SP: %.2f INP %.2f",
                         wheel_id, pwm, setpoint,
                         angle);
 
-    if (unlikely(pid_const_update.load(std::memory_order_acquire)))
+    if (unlikely(pid_property_update.load(std::memory_order_acquire)))
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Wheel %d updating PID constants", wheel_id);
         pid->SetTunings(anglePIDConstants.p,
                         anglePIDConstants.i,
                         anglePIDConstants.d);
-        pid_const_update.store(false, std::memory_order_release);
+        pid->SetSampleTime(control_loop_delay_ms);
+        pid_property_update.store(false, std::memory_order_release);
     }
 }
 
@@ -294,38 +302,39 @@ void Wheel::initSpeedPID()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Wheel %d speed PID Control task started", wheel_id);
     encoder->start_pulse_counter();
-    auto pid = std::make_unique<PID<angularvelocity_t>>(&angular_velocity, &pwm,
+    pid = std::make_unique<PID<float>>(&angular_velocity, &pwm,
                                                         &setpoint,
                                                         speedPIDConstants.p,
                                                         speedPIDConstants.i,
                                                         speedPIDConstants.d,
                                                         PID<angularvelocity_t>::DIRECT,
-                                                        1000 / updateFrequenciesWheel.speed_pid);
+                                                        control_loop_delay_ms);
 
-    pid->SetMode(PID<angularvelocity_t>::AUTOMATIC);
+    pid->SetMode(PID<float>::AUTOMATIC);
 }
 
 void Wheel::updateSpeedPIDControl()
 {
-    setpoint = setpoint_atomic.load(std::memory_order_release);
+    setpoint = setpoint_atomic.load(std::memory_order_acquire);
 
     refreshOdometry();
     pid->Compute();
 
-    pwm_value_atomic.store(pwm);
+    pwm_value_atomic.store(pwm, std::memory_order_relaxed);
     motorDriver->setSpeed(pwm);
 
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, "%d pwm: %.2f RPM SP: %.2f odo: %.2f",
                         wheel_id, pwm, setpoint,
                         angular_velocity);
 
-    if (unlikely(pid_const_update.load(std::memory_order_acquire)))
+    if (unlikely(pid_property_update.load(std::memory_order_acquire)))
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Wheel %d updating PID constants", wheel_id);
         pid->SetTunings(speedPIDConstants.p,
                         speedPIDConstants.i,
                         speedPIDConstants.d);
-        pid_const_update.store(false, std::memory_order_release);
+        pid->SetSampleTime(control_loop_delay_ms);
+        pid_property_update.store(false, std::memory_order_release);
     }
 }
 
