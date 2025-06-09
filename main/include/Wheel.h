@@ -29,7 +29,7 @@ class Wheel
 {
 public:
     // Constructor & Destructor
-    Wheel(wheel_data_t *wheel_data, TickType_t control_loop_delay_ticks);
+    Wheel(const wheel_data_t *wheel_data, TickType_t control_loop_delay_ticks);
 
     ~Wheel();
 
@@ -40,6 +40,8 @@ public:
     // Deleted Copy Semantics
     Wheel(const Wheel &) = delete;
     Wheel &operator=(const Wheel &) = delete;
+
+    void updateWheelData(const wheel_data_t *wheel_data, TickType_t control_loop_delay_ticks);
 
     // Getters
     uint8_t GetWheelID() const { return wheel_id; }
@@ -59,7 +61,6 @@ private:
     uint8_t wheel_id;
 
     // Wheel Data
-    uint8_t motor_id = 0;
     ControlMode control_mode = ControlMode::OFF;
     pid_constants_t anglePIDConstants;
     pid_constants_t speedPIDConstants;

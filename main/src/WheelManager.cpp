@@ -293,32 +293,45 @@ void WheelManager::odoBroadcastTaskActionNonBlocking(TaskAction action)
     }
 }
 
+bool WheelManager::createControlTask()
+{
+    if (control_task_handle == nullptr)
+    {
+        control_loop_run.store(true);
+        xTaskCreate(controlTaskEntry, "Control Task", 2000, this, 5, &control_task_handle);
+        return true;
+    }
+    return false;
+}
+
+bool WheelManager::createOdoBroadcastTask()
+{
+    if (odo_broadcast_task_handle == nullptr)
+    {
+        odo_broadcast_run.store(true);
+        xTaskCreate(odoBroadcastTaskEntry, "Odo Broadcast Task", 2500, this, 5, &odo_broadcast_task_handle);
+        return true;
+    }
+    return false;
+}
+
 bool WheelManager::controlLoopTaskAction(TaskAction action)
 {
-    return handleTaskAction(action,
-                            control_task_handle,
-                            "Control Task",
-                            controlTaskEntry,
-                            control_loop_run,
-                            [this]()
+    return handleTaskAction(action, control_task_handle, [this]()
+                            { return createControlTask(); }, control_loop_run, [this]()
                             { return suspendAndWaitForControlLoopSuspend(); });
 }
 
 bool WheelManager::odoBroadcastTaskAction(TaskAction action)
 {
-    return handleTaskAction(action,
-                            odo_broadcast_task_handle,
-                            "Odo Broadcast Task",
-                            odoBroadcastTaskEntry,
-                            odo_broadcast_run,
-                            [this]()
+    return handleTaskAction(action, odo_broadcast_task_handle, [this]()
+                            { return createOdoBroadcastTask(); }, odo_broadcast_run, [this]()
                             { return suspendAndWaitForOdoBroadcastSuspend(); });
 }
 
 bool WheelManager::handleTaskAction(TaskAction action,
                                     TaskHandle_t &task_handle,
-                                    const char *task_name,
-                                    TaskFunction_t task_entry,
+                                    std::function<bool()> task_creator,
                                     std::atomic<bool> &run_flag,
                                     std::function<bool()> suspend_handler)
 {
@@ -332,9 +345,7 @@ bool WheelManager::handleTaskAction(TaskAction action,
     case TaskAction::Start:
         if (task_handle == nullptr || state == eDeleted)
         {
-            run_flag.store(true);
-            xTaskCreate(task_entry, task_name, 7000, this, 5, &task_handle);
-            return true;
+            return task_creator();
         }
         return false;
 
@@ -364,7 +375,7 @@ bool WheelManager::handleTaskAction(TaskAction action,
         return false;
     }
 
-    return false; // fallback
+    return false;
 }
 
 bool WheelManager::suspendAndWaitForControlLoopSuspend()

@@ -2,7 +2,7 @@
 
 #define LOG_LOCAL_LEVEL ESP_LOG_INFO // Set local log level for this file
 
-Wheel::Wheel(wheel_data_t *wheel_data, TickType_t control_loop_delay_ticks)
+Wheel::Wheel(const wheel_data_t *wheel_data, TickType_t control_loop_delay_ticks)
     : wheel_id(wheel_data->motor_id),
       control_mode(wheel_data->control_mode),
       anglePIDConstants(wheel_data->anglePIDConstants),
@@ -28,7 +28,6 @@ Wheel::Wheel(Wheel &&other) noexcept
 {
     TAG = other.TAG;
     wheel_id = other.wheel_id;
-    motor_id = other.motor_id;
     control_mode = other.control_mode;
     anglePIDConstants = other.anglePIDConstants;
     speedPIDConstants = other.speedPIDConstants;
@@ -63,7 +62,6 @@ Wheel &Wheel::operator=(Wheel &&other) noexcept
     {
         TAG = other.TAG;
         wheel_id = other.wheel_id;
-        motor_id = other.motor_id;
         control_mode = other.control_mode;
         anglePIDConstants = other.anglePIDConstants;
         speedPIDConstants = other.speedPIDConstants;
@@ -92,6 +90,20 @@ Wheel &Wheel::operator=(Wheel &&other) noexcept
         pwm = other.pwm;
     }
     return *this;
+}
+
+void Wheel::updateWheelData(const wheel_data_t *wheel_data, TickType_t control_loop_delay_ticks)
+{
+    wheel_id = wheel_data->motor_id;
+    control_mode = wheel_data->control_mode;
+    anglePIDConstants = wheel_data->anglePIDConstants;
+    speedPIDConstants = wheel_data->speedPIDConstants;
+    motorConnections = wheel_data->motorConnections;
+    odoBroadcastStatus = wheel_data->odoBroadcastStatus;
+    radians_per_tick = wheel_data->radians_per_tick;
+    control_loop_delay_ms = pdTICKS_TO_MS(control_loop_delay_ticks);
+
+    pid_property_update.store(true);
 }
 
 odometry_t Wheel::getOdometry()
@@ -303,12 +315,12 @@ void Wheel::initSpeedPID()
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Wheel %d speed PID Control task started", wheel_id);
     encoder->start_pulse_counter();
     pid = std::make_unique<PID<float>>(&angular_velocity, &pwm,
-                                                        &setpoint,
-                                                        speedPIDConstants.p,
-                                                        speedPIDConstants.i,
-                                                        speedPIDConstants.d,
-                                                        PID<angularvelocity_t>::DIRECT,
-                                                        control_loop_delay_ms);
+                                       &setpoint,
+                                       speedPIDConstants.p,
+                                       speedPIDConstants.i,
+                                       speedPIDConstants.d,
+                                       PID<angularvelocity_t>::DIRECT,
+                                       control_loop_delay_ms);
 
     pid->SetMode(PID<float>::AUTOMATIC);
 }

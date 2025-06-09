@@ -21,7 +21,7 @@ void UARTProtocol::begin()
 
     ESP_ERROR_CHECK(uart_pattern_queue_reset(config.port, 20));
 
-    xTaskCreate(&UARTProtocol::uartTask, "uart_task", 3072, this, 10, NULL);
+    xTaskCreate(&UARTProtocol::uartTask, "uart_task", 3700, this, 10, NULL);
 
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "UART initialized successfully");
 }

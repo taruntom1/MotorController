@@ -119,11 +119,14 @@ private:
     static void odoBroadcastTaskEntry(void *pvParameters);
     void odoBroadcastTask();
 
-    void handleTaskActionNotification(uint32_t notification);
+    bool createControlTask();
+    bool createOdoBroadcastTask();
+
     bool handleTaskAction(TaskAction action, TaskHandle_t &task_handle,
-                          const char *task_name, TaskFunction_t task_entry,
+                          std::function<bool()> task_creator,
                           std::atomic<bool> &run_flag,
                           std::function<bool()> suspend_handler);
+    void handleTaskActionNotification(uint32_t notification);
 
     bool suspendAndWaitForControlLoopSuspend();
     bool suspendAndWaitForOdoBroadcastSuspend();

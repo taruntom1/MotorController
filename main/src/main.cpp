@@ -104,5 +104,5 @@ extern "C" void app_main()
 
     // static MPU6050Reader imuReader(cfg, &imu_data);
 
-    xTaskCreate(cpu_usage_logger_task, "cpu_logger", 4096, NULL, 1, NULL);
+    xTaskCreate(cpu_usage_logger_task, "cpu_logger", 3000, NULL, 1, NULL);
 }
