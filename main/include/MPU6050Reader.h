@@ -72,7 +72,7 @@ public:
     /**
      * @brief Configuration struct for MPU6050Reader
      */
-    struct Config
+    struct config
     {
         i2c_port_t i2c_port;       /*!< I2C port number (e.g., I2C_NUM_0) */
         gpio_num_t sda_io_num;     /*!< GPIO number for SDA */
@@ -87,13 +87,11 @@ public:
     };
 
     /**
-     * @brief Construct the MPU6050Reader with the given configuration and data pointer.
+     * @brief Construct the MPU6050Reader with the given configuration.
      *
      * @param config Configuration parameters for I2C, MPU6050 settings, and task.
-     * @param out_data_ptr Pointer to an IMUData struct where readings will be stored.
-     *                     Must remain valid for the lifetime of this object.
      */
-    MPU6050Reader(const Config &config, imu_data_t *out_data_ptr);
+    MPU6050Reader(const config &config);
 
     /**
      * @brief Destructor: stops the reading task, deletes MPU6050 handle, and cleans up.
@@ -148,10 +146,10 @@ private:
     void cleanup();
 
 private:
-    Config cfg_;
-    imu_data_t *data_ptr_;              /*!< Shared data struct pointer */
-    mpu6050_handle_t sensor_handle_; /*!< Underlying C handle for MPU6050 */
-    SemaphoreHandle_t data_mutex_;   /*!< Mutex protecting data_ptr_ */
-    TaskHandle_t task_handle_;       /*!< Handle for the FreeRTOS reading task */
-    bool is_running_;                /*!< True if task is running */
+    config cfg_;
+    imu_data_t data_;                  /*!< Internal IMU data storage */
+    mpu6050_handle_t sensor_handle_;   /*!< Underlying C handle for MPU6050 */
+    SemaphoreHandle_t data_mutex_;     /*!< Mutex protecting data_ */
+    TaskHandle_t task_handle_;         /*!< Handle for the FreeRTOS reading task */
+    bool is_running_;                  /*!< True if task is running */
 };

@@ -2,26 +2,23 @@
 #include <cstring> // For memset
 #include <cstdio>  // For printf (optional debugging)
 
-MPU6050Reader::MPU6050Reader(const Config &config, imu_data_t *out_data_ptr)
+MPU6050Reader::MPU6050Reader(const config &config)
     : cfg_(config),
-      data_ptr_(out_data_ptr),
+      data_(),
       sensor_handle_(nullptr),
       data_mutex_(nullptr),
       task_handle_(nullptr),
       is_running_(false)
 {
-    // Initialize the shared data to zeros
-    if (data_ptr_)
-    {
-        data_ptr_->acce_x = 0.0f;
-        data_ptr_->acce_y = 0.0f;
-        data_ptr_->acce_z = 0.0f;
-        data_ptr_->gyro_x = 0.0f;
-        data_ptr_->gyro_y = 0.0f;
-        data_ptr_->gyro_z = 0.0f;
-    }
+    // Initialize the internal data to zeros
+    data_.acce_x = 0.0f;
+    data_.acce_y = 0.0f;
+    data_.acce_z = 0.0f;
+    data_.gyro_x = 0.0f;
+    data_.gyro_y = 0.0f;
+    data_.gyro_z = 0.0f;
 
-    // Create a mutex for protecting data_ptr_
+    // Create a mutex for protecting data_
     data_mutex_ = xSemaphoreCreateMutex();
     if (!data_mutex_)
     {
@@ -168,7 +165,7 @@ imu_data_t MPU6050Reader::readData()
     imu_data_t copy;
     if (xSemaphoreTake(data_mutex_, pdMS_TO_TICKS(10)) == pdTRUE)
     {
-        copy = *data_ptr_;
+        copy = data_;
         xSemaphoreGive(data_mutex_);
     }
     else
@@ -200,17 +197,17 @@ void MPU6050Reader::taskFunc(void *arg)
             // Optionally log or handle error
         }
 
-        // 3. Write into shared IMUData struct under mutex
+        // 3. Write into internal IMUData struct under mutex
         if (self->data_mutex_)
         {
             if (xSemaphoreTake(self->data_mutex_, 0) == pdTRUE)
             {
-                self->data_ptr_->acce_x = acce_val.acce_x;
-                self->data_ptr_->acce_y = acce_val.acce_y;
-                self->data_ptr_->acce_z = acce_val.acce_z;
-                self->data_ptr_->gyro_x = gyro_val.gyro_x;
-                self->data_ptr_->gyro_y = gyro_val.gyro_y;
-                self->data_ptr_->gyro_z = gyro_val.gyro_z;
+                self->data_.acce_x = acce_val.acce_x;
+                self->data_.acce_y = acce_val.acce_y;
+                self->data_.acce_z = acce_val.acce_z;
+                self->data_.gyro_x = gyro_val.gyro_x;
+                self->data_.gyro_y = gyro_val.gyro_y;
+                self->data_.gyro_z = gyro_val.gyro_z;
                 xSemaphoreGive(self->data_mutex_);
             }
         }

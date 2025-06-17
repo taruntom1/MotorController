@@ -7,7 +7,6 @@
 #include "esp_cpu.h"
 #include "MyStructs.h"
 
-
 /**
  * @defgroup EncoderPulseReaderModule Encoder Pulse Reader
  * @brief Module for managing encoder pulse counting and velocity calculation.
@@ -20,6 +19,8 @@
 
 /**
  * @brief Configuration structure for the Pulse Counter (PCNT) module.
+ *
+ * Holds all configuration parameters for the PCNT unit, channel, and glitch filter.
  */
 struct pcnt_config_t
 {
@@ -45,31 +46,17 @@ struct pcnt_config_t
  * and calculate raw angle and velocity based on encoder pulses.
  *
  * @note The class manages the lifetime of the PCNT unit and channel handles.
- *
- * @var EncoderPulseReader::TAG
- *      Tag string for logging and debugging purposes.
- * @var EncoderPulseReader::_pcnt_config
- *      Pointer to the configuration structure for the PCNT peripheral.
- * @var EncoderPulseReader::pcnt_unit
- *      Handle for the PCNT unit.
- * @var EncoderPulseReader::pcnt_channel
- *      Handle for the PCNT channel.
- * @var EncoderPulseReader::previous_count
- *      Previous pulse count, used for velocity calculation.
- * @var EncoderPulseReader::previous_time
- *      Previous timestamp, used for velocity calculation.
  */
-
 class EncoderPulseReader
 {
 private:
-    const char *TAG = "EncoderPulseReader";
-    pcnt_config_t *_pcnt_config;               /**< Pointer to the configuration structure for PCNT. */
-    pcnt_unit_handle_t pcnt_unit = NULL;       /**< Handle for the PCNT unit. */
-    pcnt_channel_handle_t pcnt_channel = NULL; /**< Handle for the PCNT channel. */
-    float inverse_cycles_per_sec;              /**< Cycles per microsecond of processor. */
-    int previous_count = 0;                    /**< Previous pulse count for velocity calculation. */
-    uint64_t previous_cpu_cycles = 0;          /**< Previous timestamp for velocity calculation. */
+    const char *TAG = "EncoderPulseReader";    ///< Tag string for logging and debugging purposes.
+    pcnt_config_t *_pcnt_config;               ///< Pointer to the configuration structure for PCNT.
+    pcnt_unit_handle_t pcnt_unit = NULL;       ///< Handle for the PCNT unit.
+    pcnt_channel_handle_t pcnt_channel = NULL; ///< Handle for the PCNT channel.
+    float inverse_cycles_per_sec;              ///< Cycles per microsecond of processor.
+    int previous_count = 0;                    ///< Previous pulse count for velocity calculation.
+    uint64_t previous_cpu_cycles = 0;          ///< Previous timestamp for velocity calculation.
 
 public:
     /**
@@ -95,15 +82,15 @@ public:
      */
     bool stop_pulse_counter();
 
-
     /**
      * @brief Clears the pulse count of the counter.
+     *        This resets the internal pulse count to zero.
      */
     void clear_pulse_count();
 
     /**
-     * @brief Calculates and returns the raw angle based on the current pulse count.
-     * @return The raw angle in degrees or radians, depending on implementation.
+     * @brief Gets the current encoder tick count.
+     * @return The current encoder tick count (raw value from PCNT).
      */
     encoder_ticks_t get_ticks();
 
@@ -113,6 +100,11 @@ public:
      */
     encoder_tickrate_t get_tickrate();
 
+    /**
+     * @brief Retrieves both the current tick count and tick rate (velocity).
+     * @param ticks Reference to store the current tick count.
+     * @param tickrate Reference to store the current tick rate.
+     */
     void get_tick_tickrate(encoder_ticks_t &ticks, encoder_tickrate_t &tickrate);
 };
 

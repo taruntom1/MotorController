@@ -52,6 +52,14 @@ public:
     {
         OdoBroadcastCallbackBlocking = std::move(cb);
     }
+    void setIMUCreateCallback(std::function<void(const imu_config_t &)> cb)
+    {
+        IMUCreateCallback = std::move(cb);
+    }
+    void setIMUDeleteCallback(std::function<void()> cb)
+    {
+        IMUDeleteCallback = std::move(cb);
+    }
 
 private:
     UARTProtocol protocol;
@@ -77,6 +85,7 @@ private:
     void refreshBroadcastStatus();
     bool GetOdoBroadcastStatus();
     void CallFunction(Command commandType);
+    void handleIMUCommand(Command commandType);
 
     // Callback functions for different
     std::function<void(bool)> ControllerRunCallback;
@@ -87,6 +96,8 @@ private:
     std::function<void(const std::vector<float> &)> WheelSetpointCallback;
     std::function<void(TaskAction)> OdoBroadcastCallbackNonBlocking;
     std::function<void(TaskAction)> OdoBroadcastCallbackBlocking;
+    std::function<void(const imu_config_t &)> IMUCreateCallback;
+    std::function<void()> IMUDeleteCallback;
 };
 
 #endif // CONTROL_INTERFACE_H

@@ -25,7 +25,9 @@ enum class Command : uint8_t
 
     SET_MOTOR_CONTROL_MODES,
     SET_ODO_BROADCAST_STATUS,
-    SEND_ODOMETRY
+    SEND_ODOMETRY,
+    IMU_CREATE,
+    IMU_DELETE
 };
 
 #endif // COMMANDS_H

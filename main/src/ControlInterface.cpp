@@ -314,6 +314,44 @@ bool ControlInterface::SendWheelData()
     return true;
 } */
 
+void ControlInterface::handleIMUCommand(Command commandType)
+{
+    switch (commandType)
+    {
+    case Command::IMU_CREATE:
+    {
+        constexpr size_t config_size = imu_config_t::size;
+        std::vector<uint8_t> data = protocol.ReadData(config_size, 1000);
+        if (!data.empty() && IMUCreateCallback)
+        {
+            size_t offset = 0;
+            imu_config_t config;
+            config.from_bytes(data, offset);
+            IMUCreateCallback(config);
+            protocol.SendCommand(Command::READ_SUCCESS);
+        }
+        else
+        {
+            protocol.SendCommand(Command::READ_FAILURE);
+        }
+        break;
+    }
+    case Command::IMU_DELETE:
+        if (IMUDeleteCallback)
+        {
+            IMUDeleteCallback();
+            protocol.SendCommand(Command::READ_SUCCESS);
+        }
+        else
+        {
+            protocol.SendCommand(Command::READ_FAILURE);
+        }
+        break;
+    default:
+        break;
+    }
+}
+
 void ControlInterface::CallFunction(Command commandType)
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Calling function for command type: %d", static_cast<uint8_t>(commandType));
@@ -362,6 +400,11 @@ void ControlInterface::CallFunction(Command commandType)
 
     case Command::SET_ODO_BROADCAST_STATUS:
         GetOdoBroadcastStatus();
+        break;
+
+    case Command::IMU_CREATE:
+    case Command::IMU_DELETE:
+        handleIMUCommand(commandType);
         break;
 
     default:

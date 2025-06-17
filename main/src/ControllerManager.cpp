@@ -1,12 +1,46 @@
 #include "ControllerManager.h"
+#include "MPU6050Reader.h"
 
 ControllerManager::ControllerManager()
     : wheel_manager_({100, 50}),
-      control_interface_({576000, UART_NUM_0, 2048, 44, 43, 0xAA, 100})
+      control_interface_({576000, UART_NUM_0, 2048, 44, 43, 0xAA, 100}),
+      mpu6050_reader_(nullptr)
 {
     connectCallbacks();
 
     wheel_manager_.controlLoopTaskActionNonBlocking(TaskAction::Start);
+}
+
+ControllerManager::~ControllerManager()
+{
+    deleteIMU();
+}
+
+void ControllerManager::createIMU(const imu_config_t &config)
+{
+    deleteIMU();
+    MPU6050Reader::config cfg = {
+        .i2c_port = I2C_NUM_0,
+        .sda_io_num = static_cast<gpio_num_t>(config.sda_pin),
+        .scl_io_num = static_cast<gpio_num_t>(config.scl_pin),
+        .i2c_clk_speed_hz = 400000,
+        .dev_addr = MPU6050_I2C_ADDRESS,
+        .acce_fs = ACCE_FS_2G,
+        .gyro_fs = GYRO_FS_250DPS,
+        .sample_rate_hz = config.sample_rate_hz,
+        .task_priority = 5,
+        .task_stack_size = 4096};
+    mpu6050_reader_ = new MPU6050Reader(cfg);
+    mpu6050_reader_->run();
+}
+
+void ControllerManager::deleteIMU()
+{
+    if (mpu6050_reader_)
+    {
+        delete mpu6050_reader_;
+        mpu6050_reader_ = nullptr;
+    }
 }
 
 void ControllerManager::setControllerProperties(const controller_properties_t &controller_properties)

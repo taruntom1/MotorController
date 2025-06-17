@@ -311,6 +311,31 @@ struct update_frequencies_t
     }
 };
 
+struct imu_config_t
+{
+    pin_connection_t sda_pin;   // GPIO pin for SDA
+    pin_connection_t scl_pin;   // GPIO pin for SCL
+    frequency_t sample_rate_hz; // Sample rate in Hz
+
+    constexpr static size_t size = sizeof(pin_connection_t) * 2 + sizeof(frequency_t);
+
+    std::vector<uint8_t> to_bytes() const
+    {
+        std::vector<uint8_t> buf;
+        buf.reserve(size);
+        detail::appendLE(buf, sda_pin);
+        detail::appendLE(buf, scl_pin);
+        detail::appendLE(buf, sample_rate_hz);
+        return buf;
+    }
+    void from_bytes(const std::vector<uint8_t> &buf, size_t &offset)
+    {
+        sda_pin = detail::readLE<pin_connection_t>(buf, offset);
+        scl_pin = detail::readLE<pin_connection_t>(buf, offset);
+        sample_rate_hz = detail::readLE<frequency_t>(buf, offset);
+    }
+};
+
 struct controller_properties_t
 {
     uint8_t numMotors;
@@ -372,25 +397,6 @@ enum class PIDType : uint8_t
     VELOCITY = 1
 };
 
-struct WheelTaskHandles
-{
-    TaskHandle_t wheel_run_task_handle;
-    TaskHandle_t control_task_handle;
-    TaskHandle_t odo_broadcast;
-};
-
-struct InterfaceTaskHandles
-{
-    TaskHandle_t Run;
-};
-
-struct TaskHandles
-{
-    TaskHandle_t main_task_handle;
-    TaskHandle_t wheel_manager;
-    InterfaceTaskHandles interface_task_handles;
-    std::vector<WheelTaskHandles> wheel_task_handles;
-};
 
 /** @defgroup notifications Notifications
  *  @brief Defines notification messages for the motor controller.
