@@ -49,7 +49,7 @@ void WheelManager::controlTaskEntry(void *pvParameters)
 
 void WheelManager::controlTask()
 {
-    TickType_t last_wake_time;
+    TickType_t last_wake_time = xTaskGetTickCount();
     while (true)
     {
         for (auto &wheel_opt : wheels_)
@@ -76,7 +76,7 @@ void WheelManager::odoBroadcastTaskEntry(void *pvParameters)
 void WheelManager::odoBroadcastTask()
 {
     odoBroadcastData.second.reserve(wheel_count_);
-    TickType_t last_wake_time;
+    TickType_t last_wake_time = xTaskGetTickCount();
 
     while (true)
     {
