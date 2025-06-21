@@ -1,8 +1,10 @@
 #include "ControlInterface.h"
 #include "esp_log.h"
+#include "TimeSyncServer.h"
 #include <string.h>
 
 #define LOG_LOCAL_LEVEL ESP_LOG_DEBUG // Set local log level for this file
+
 
 static const char *TAG = "ControlInterface";
 
@@ -219,6 +221,7 @@ bool ControlInterface::GetWheelControlMode()
     if (unlikely(buffer.empty()))
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to read motor ID and control mode");
+        protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
 
@@ -227,6 +230,7 @@ bool ControlInterface::GetWheelControlMode()
     if (unlikely(motorID >= wheel_count))
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Invalid motor ID %d", motorID);
+        protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
     ControlMode control_mode;
