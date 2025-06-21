@@ -59,7 +59,7 @@ void WheelManager::controlTask()
                 wheel_opt->updateControlLoop();
             }
         }
-        if (control_loop_run.load(std::memory_order_relaxed) == false)
+        if (control_loop_run.load(std::memory_order_acquire) == false)
         {
             notifyWheelManager(wheel_manager_notifications::CONTROL_LOOP_SUSPENDED);
             vTaskSuspend(NULL);
@@ -93,7 +93,7 @@ void WheelManager::odoBroadcastTask()
         assert(odoBroadcastCallback && "odoBroadcastCallback must be set before calling");
         odoBroadcastCallback(odoBroadcastData);
 
-        if (odo_broadcast_run.load(std::memory_order_relaxed) == false)
+        if (odo_broadcast_run.load(std::memory_order_acquire) == false)
         {
             notifyWheelManager(wheel_manager_notifications::ODO_BROADCAST_SUSPENDED);
             vTaskSuspend(NULL);
@@ -310,9 +310,18 @@ bool WheelManager::createControlTask()
     if (control_task_handle == nullptr)
     {
         control_loop_run.store(true);
-        xTaskCreate(controlTaskEntry, "Control Task", 2000, this, 5, &control_task_handle);
-        control_task_state_ = TaskState::Running;
-        return true;
+        BaseType_t result = xTaskCreate(controlTaskEntry, "Control Task", 2000, this, 5, &control_task_handle);
+        if (result == pdPASS)
+        {
+            control_task_state_ = TaskState::Running;
+            return true;
+        }
+        else
+        {
+            control_loop_run.store(false);
+            control_task_handle = nullptr;
+            return false;
+        }
     }
     return false;
 }
@@ -322,9 +331,18 @@ bool WheelManager::createOdoBroadcastTask()
     if (odo_broadcast_task_handle == nullptr)
     {
         odo_broadcast_run.store(true);
-        xTaskCreate(odoBroadcastTaskEntry, "Odo Broadcast Task", 2500, this, 5, &odo_broadcast_task_handle);
-        odo_broadcast_task_state_ = TaskState::Running;
-        return true;
+        BaseType_t result = xTaskCreate(odoBroadcastTaskEntry, "Odo Broadcast Task", 2500, this, 5, &odo_broadcast_task_handle);
+        if (result == pdPASS)
+        {
+            odo_broadcast_task_state_ = TaskState::Running;
+            return true;
+        }
+        else
+        {
+            odo_broadcast_run.store(false);
+            odo_broadcast_task_handle = nullptr;
+            return false;
+        }
     }
     return false;
 }
@@ -418,7 +436,7 @@ bool WheelManager::suspendAndWaitForControlLoopSuspend()
     uint32_t notification = 0;
     while (!(notification & expected_notification))
     {
-        if (xTaskNotifyWait(0, expected_notification, &notification, 10) == pdFAIL)
+        if (xTaskNotifyWait(0, expected_notification, &notification, 100) == pdFAIL)
             return false; // Timeout or failure
     }
 
@@ -444,7 +462,7 @@ bool WheelManager::suspendAndWaitForOdoBroadcastSuspend()
     uint32_t notification = 0;
     while (!(notification & expected_notification))
     {
-        if (xTaskNotifyWait(0, expected_notification, &notification, 10) == pdFAIL)
+        if (xTaskNotifyWait(0, expected_notification, &notification, 100) == pdFAIL)
             return false; // Timeout or failure
     }
 
