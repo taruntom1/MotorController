@@ -139,4 +139,8 @@ private:
 
     bool suspendAndWaitForControlLoopSuspend();
     bool suspendAndWaitForOdoBroadcastSuspend();
+
+    void notifyWheelManager(wheel_manager_notifications notification) {
+        xTaskNotify(wheel_manage_task_handle, static_cast<uint32_t>(notification), eSetBits);
+    }
 };

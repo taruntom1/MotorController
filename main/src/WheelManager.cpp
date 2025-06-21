@@ -61,9 +61,7 @@ void WheelManager::controlTask()
         }
         if (control_loop_run.load(std::memory_order_relaxed) == false)
         {
-            xTaskNotify(wheel_manage_task_handle,
-                        static_cast<uint32_t>(wheel_manager_notifications::CONTROL_LOOP_SUSPENDED),
-                        eSetBits);
+            notifyWheelManager(wheel_manager_notifications::CONTROL_LOOP_SUSPENDED);
             vTaskSuspend(NULL);
         }
         vTaskDelayUntil(&last_wake_time, control_task_delay_ticks.load(std::memory_order_acquire));
@@ -96,9 +94,7 @@ void WheelManager::odoBroadcastTask()
 
         if (odo_broadcast_run.load(std::memory_order_relaxed) == false)
         {
-            xTaskNotify(wheel_manage_task_handle,
-                        static_cast<uint32_t>(wheel_manager_notifications::ODO_BROADCAST_SUSPENDED),
-                        eSetBits);
+            notifyWheelManager(wheel_manager_notifications::ODO_BROADCAST_SUSPENDED);
             vTaskSuspend(NULL);
         }
         vTaskDelayUntil(&last_wake_time, odo_broadcast_task_delay_ticks.load(std::memory_order_acquire));
@@ -108,23 +104,20 @@ void WheelManager::odoBroadcastTask()
 void WheelManager::updateWheelCount(uint8_t count)
 {
     wheel_count_ = count;
-    xTaskNotify(wheel_manage_task_handle,
-                static_cast<uint32_t>(wheel_manager_notifications::NUM_WHEEL_UPDATE), eSetBits);
+    notifyWheelManager(wheel_manager_notifications::NUM_WHEEL_UPDATE);
 }
 
 void WheelManager::updateWheel(const wheel_data_t &wheel)
 {
     xQueueSendToBack(wheel_data_queue, &wheel, 10);
-    xTaskNotify(wheel_manage_task_handle,
-                static_cast<uint32_t>(wheel_manager_notifications::WHEEL_UPDATE), eSetBits);
+    notifyWheelManager(wheel_manager_notifications::WHEEL_UPDATE);
 }
 
 void WheelManager::updateControlMode(uint8_t id, ControlMode mode)
 {
     std::pair<uint8_t, ControlMode> control_mode_pair(id, mode);
     xQueueSendToBack(control_mode_queue, &control_mode_pair, 10);
-    xTaskNotify(wheel_manage_task_handle,
-                static_cast<uint32_t>(wheel_manager_notifications::CONTROL_MODE_UPDATE), eSetBits);
+    notifyWheelManager(wheel_manager_notifications::CONTROL_MODE_UPDATE);
 }
 
 void WheelManager::updateOdoBroadcastFrequency(frequency_t frequency)
@@ -273,16 +266,16 @@ void WheelManager::controlLoopTaskActionNonBlocking(TaskAction action)
     switch (action)
     {
     case TaskAction::Start:
-        xTaskNotify(wheel_manage_task_handle, static_cast<uint32_t>(wheel_manager_notifications::START_CONTROL_LOOP), eSetBits);
+        notifyWheelManager(wheel_manager_notifications::START_CONTROL_LOOP);
         break;
     case TaskAction::Stop:
-        xTaskNotify(wheel_manage_task_handle, static_cast<uint32_t>(wheel_manager_notifications::STOP_CONTROL_LOOP), eSetBits);
+        notifyWheelManager(wheel_manager_notifications::STOP_CONTROL_LOOP);
         break;
     case TaskAction::Suspend:
-        xTaskNotify(wheel_manage_task_handle, static_cast<uint32_t>(wheel_manager_notifications::SUSPEND_CONTROL_LOOP), eSetBits);
+        notifyWheelManager(wheel_manager_notifications::SUSPEND_CONTROL_LOOP);
         break;
     case TaskAction::Resume:
-        xTaskNotify(wheel_manage_task_handle, static_cast<uint32_t>(wheel_manager_notifications::RESUME_CONTROL_LOOP), eSetBits);
+        notifyWheelManager(wheel_manager_notifications::RESUME_CONTROL_LOOP);
         break;
     default:
         break;
@@ -294,16 +287,16 @@ void WheelManager::odoBroadcastTaskActionNonBlocking(TaskAction action)
     switch (action)
     {
     case TaskAction::Start:
-        xTaskNotify(wheel_manage_task_handle, static_cast<uint32_t>(wheel_manager_notifications::START_ODO_BROADCAST), eSetBits);
+        notifyWheelManager(wheel_manager_notifications::START_ODO_BROADCAST);
         break;
     case TaskAction::Stop:
-        xTaskNotify(wheel_manage_task_handle, static_cast<uint32_t>(wheel_manager_notifications::STOP_ODO_BROADCAST), eSetBits);
+        notifyWheelManager(wheel_manager_notifications::STOP_ODO_BROADCAST);
         break;
     case TaskAction::Suspend:
-        xTaskNotify(wheel_manage_task_handle, static_cast<uint32_t>(wheel_manager_notifications::SUSPEND_ODO_BROADCAST), eSetBits);
+        notifyWheelManager(wheel_manager_notifications::SUSPEND_ODO_BROADCAST);
         break;
     case TaskAction::Resume:
-        xTaskNotify(wheel_manage_task_handle, static_cast<uint32_t>(wheel_manager_notifications::RESUME_ODO_BROADCAST), eSetBits);
+        notifyWheelManager(wheel_manager_notifications::RESUME_ODO_BROADCAST);
         break;
     default:
         break;
