@@ -90,6 +90,7 @@ void WheelManager::odoBroadcastTask()
                 odoBroadcastData.second.push_back(wheel_opt->getOdometry());
             }
         }
+        assert(odoBroadcastCallback && "odoBroadcastCallback must be set before calling");
         odoBroadcastCallback(odoBroadcastData);
 
         if (odo_broadcast_run.load(std::memory_order_relaxed) == false)
