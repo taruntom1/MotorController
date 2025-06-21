@@ -57,6 +57,7 @@ class WheelManager
 {
 public:
     WheelManager(WheelManagerConfig config);
+    ~WheelManager();
 
     void updateWheelCount(uint8_t count);
     void updateWheel(const wheel_data_t &wheel);

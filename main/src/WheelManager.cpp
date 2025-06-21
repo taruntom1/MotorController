@@ -450,3 +450,35 @@ bool WheelManager::suspendAndWaitForOdoBroadcastSuspend()
 
     return true;
 }
+
+WheelManager::~WheelManager()
+{
+    // Stop and delete control task if running
+    if (control_task_handle != nullptr) {
+        control_loop_run.store(false);
+        vTaskDelete(control_task_handle);
+        control_task_handle = nullptr;
+    }
+    // Stop and delete odometry broadcast task if running
+    if (odo_broadcast_task_handle != nullptr) {
+        odo_broadcast_run.store(false);
+        vTaskDelete(odo_broadcast_task_handle);
+        odo_broadcast_task_handle = nullptr;
+    }
+    // Delete wheel manager task if running
+    if (wheel_manage_task_handle != nullptr) {
+        vTaskDelete(wheel_manage_task_handle);
+        wheel_manage_task_handle = nullptr;
+    }
+    // Delete queues
+    if (wheel_data_queue != nullptr) {
+        vQueueDelete(wheel_data_queue);
+        wheel_data_queue = nullptr;
+    }
+    if (control_mode_queue != nullptr) {
+        vQueueDelete(control_mode_queue);
+        control_mode_queue = nullptr;
+    }
+    // Clear wheels
+    wheels_.clear();
+}
