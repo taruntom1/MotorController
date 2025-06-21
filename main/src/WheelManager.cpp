@@ -52,9 +52,12 @@ void WheelManager::controlTask()
     TickType_t last_wake_time;
     while (true)
     {
-        for (auto &wheel : wheels_)
+        for (auto &wheel_opt : wheels_)
         {
-            wheel.updateControlLoop();
+            if (wheel_opt)
+            {
+                wheel_opt->updateControlLoop();
+            }
         }
         if (control_loop_run.load(std::memory_order_relaxed) == false)
         {
@@ -82,9 +85,12 @@ void WheelManager::odoBroadcastTask()
         odoBroadcastData.second.clear();
         odoBroadcastData.first = esp_timer_get_time();
 
-        for (auto &wheel : wheels_)
+        for (auto &wheel_opt : wheels_)
         {
-            odoBroadcastData.second.push_back(wheel.getOdometry());
+            if (wheel_opt)
+            {
+                odoBroadcastData.second.push_back(wheel_opt->getOdometry());
+            }
         }
         odoBroadcastCallback(odoBroadcastData);
 
@@ -129,13 +135,21 @@ void WheelManager::updateOdoBroadcastFrequency(frequency_t frequency)
 void WheelManager::updateControlLoopFrequency(frequency_t frequency)
 {
     control_task_delay_ticks = pdMS_TO_TICKS(1000 / frequency);
-    for (auto &wheel : wheels_)
-        wheel.updateLoopDelay(frequency);
+    for (auto &wheel_opt : wheels_)
+    {
+        if (wheel_opt)
+        {
+            wheel_opt->updateLoopDelay(frequency);
+        }
+    }
 }
 
 void WheelManager::updatePIDConstants(uint8_t id, PIDType type, pid_constants_t constants)
 {
-    wheels_.at(id).updatePIDConstants(type, constants);
+    if (id >= wheels_.size() || !(wheels_.at(id).has_value()))
+        return;
+
+    wheels_.at(id)->updatePIDConstants(type, constants);
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "PID constants changed for wheel : %d, Type %d", id, static_cast<uint8_t>(type));
 }
 
@@ -146,8 +160,11 @@ void WheelManager::updateSetpoints(const std::vector<float> &setpoints)
     int i = 0;
     for (auto &wheel : wheels_)
     {
-        wheel.updateSetpoint(setpoints[i]);
-        i++;
+        if (wheel)
+        {
+            wheel->updateSetpoint(setpoints[i]);
+            i++;
+        }
     }
 }
 
@@ -156,11 +173,8 @@ void WheelManager::changeWheelCount()
     controlLoopTaskAction(TaskAction::Suspend);
     odoBroadcastTaskAction(TaskAction::Suspend);
 
-    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Cleaning up previous motor instances");
-    wheels_.clear();
-
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Allocating memory for %d motors", wheel_count_);
-    wheels_.reserve(wheel_count_);
+    wheels_.resize(wheel_count_);
 
     controlLoopTaskAction(TaskAction::Resume);
     odoBroadcastTaskAction(TaskAction::Resume);
@@ -180,20 +194,17 @@ void WheelManager::changeRequestedWheels()
         if (i >= wheel_count_)
             continue;
 
-        auto it = std::find_if(wheels_.begin(), wheels_.end(), [i](const Wheel &obj)
-                               { return obj.GetWheelID() == i; });
-
-        if (it != wheels_.end())
+        auto &wheel_slot = wheels_[i];
+        if (wheel_slot.has_value())
         {
-            it->~Wheel();
-            new (&(*it)) Wheel(&wheel_data, control_task_delay_ticks.load());
-            ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Object replaced for wheel id : %d ", i);
+            ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Replacing existing wheel at index: %d", i);
         }
         else
         {
-            wheels_.emplace_back(&wheel_data, control_task_delay_ticks.load());
-            ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "New object created for wheel id : %d ", i);
+            ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Creating new wheel at index: %d", i);
         }
+
+        wheel_slot.emplace(&wheel_data, control_task_delay_ticks.load());
     }
 
     controlLoopTaskAction(TaskAction::Resume);
@@ -209,8 +220,12 @@ void WheelManager::changeControlMode()
     if (xQueueReceive(control_mode_queue, &control_mode_pair, 2) == pdTRUE &&
         control_mode_pair.first < wheel_count_)
     {
-        wheels_[control_mode_pair.first].updateControlMode(control_mode_pair.second);
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Control mode changed for wheel id : %d", control_mode_pair.first);
+        auto &wheel = wheels_[control_mode_pair.first];
+        if (wheel)
+        {
+            wheel->updateControlMode(control_mode_pair.second);
+            ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Control mode changed for wheel id : %d", control_mode_pair.first);
+        }
     }
 
     controlLoopTaskAction(TaskAction::Resume);
@@ -326,7 +341,7 @@ bool WheelManager::controlLoopTaskAction(TaskAction action)
 
 bool WheelManager::odoBroadcastTaskAction(TaskAction action)
 {
-    return handleTaskAction(action, odo_broadcast_task_handle, control_task_state_, [this]()
+    return handleTaskAction(action, odo_broadcast_task_handle, odo_broadcast_task_state_, [this]()
                             { return createOdoBroadcastTask(); }, odo_broadcast_run, [this]()
                             { return suspendAndWaitForOdoBroadcastSuspend(); });
 }

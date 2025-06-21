@@ -98,7 +98,7 @@ private:
     std::atomic<TickType_t> control_task_delay_ticks;
     std::atomic<TickType_t> odo_broadcast_task_delay_ticks;
 
-    std::vector<Wheel> wheels_;
+    std::vector<std::optional<Wheel>> wheels_;
     uint8_t wheel_count_{0};
 
     // Queue handles
