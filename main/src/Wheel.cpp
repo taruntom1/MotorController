@@ -4,7 +4,7 @@
 
 Wheel::Wheel(const wheel_data_t *wheel_data, TickType_t control_loop_delay_ticks)
     : wheel_id(wheel_data->motor_id),
-      control_mode(wheel_data->control_mode),
+      control_mode(ControlMode::OFF),
       anglePIDConstants(wheel_data->anglePIDConstants),
       speedPIDConstants(wheel_data->speedPIDConstants),
       motorConnections(wheel_data->motorConnections),
@@ -17,6 +17,7 @@ Wheel::Wheel(const wheel_data_t *wheel_data, TickType_t control_loop_delay_ticks
 
     InitMotorDriver();
     InitEncoder();
+    updateControlMode(control_mode);
 }
 
 Wheel::~Wheel()

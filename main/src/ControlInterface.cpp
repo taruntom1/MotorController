@@ -93,7 +93,7 @@ bool ControlInterface::GetWheelData()
 
     WheelDataCallback(wheelData);
 
-    odo_broadcast_flags.at(wheel_id) = odo_broadcast_flag;
+    odo_broadcast_flags.at(wheel_id) = wheelData.odoBroadcastStatus;
     refreshBroadcastStatus();
 
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Motor data read successful for motor ID %d", wheel_id);
@@ -120,26 +120,38 @@ void ControlInterface::restoreAllBroadcast()
 
 void ControlInterface::refreshBroadcastStatus()
 {
-    for (auto &flag : odo_broadcast_flags)
+    // Zero initialize aggregate flag
+    odo_broadcast_flag = {};
+
+    for (const auto &flag : odo_broadcast_flags)
     {
         odo_broadcast_flag |= flag;
     }
+
+    const TaskAction action = (odo_broadcast_flag.angle ||
+                               odo_broadcast_flag.speed ||
+                               odo_broadcast_flag.pwm_value)
+                                  ? TaskAction::Start
+                                  : TaskAction::Stop;
+
+    OdoBroadcastCallbackNonBlocking(action);
 }
 
 bool ControlInterface::GetOdoBroadcastStatus()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Reading odo broadcast status");
+
     constexpr size_t buffer_size = sizeof(uint8_t) + odo_broadcast_flags_t::size;
     std::vector<uint8_t> buffer = protocol.ReadData(buffer_size, 1000);
 
-    // Read motorID + broadcast flags in one read
-    if (unlikely(buffer.empty()))
+    if (unlikely(buffer.size() < buffer_size))
     {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Failed to read odo broadcast status");
         protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
 
-    uint8_t motorID = buffer[0];
+    const uint8_t motorID = buffer[0];
     if (unlikely(motorID >= wheel_count))
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Motor ID out of range");
@@ -152,19 +164,7 @@ bool ControlInterface::GetOdoBroadcastStatus()
     odo_broadcast_flags[motorID].from_bytes(buffer, offset);
     protocol.SendCommand(Command::READ_SUCCESS);
 
-    // Update aggregated broadcast status
-    odo_broadcast_flags_t &aggregatedStatus = odo_broadcast_flag;
-    memset(&aggregatedStatus, 0, sizeof(odo_broadcast_flags_t));
-
-    for (auto &odoBroadcastStatus : odo_broadcast_flags)
-    {
-        aggregatedStatus |= odoBroadcastStatus;
-    }
-
-    if (odo_broadcast_flag.angle || odo_broadcast_flag.speed || odo_broadcast_flag.pwm_value)
-        OdoBroadcastCallbackNonBlocking(TaskAction::Start);
-    else
-        OdoBroadcastCallbackNonBlocking(TaskAction::Stop);
+    refreshBroadcastStatus();
 
     return true;
 }

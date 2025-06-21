@@ -210,7 +210,7 @@ void WheelManager::changeControlMode()
         control_mode_pair.first < wheel_count_)
     {
         wheels_[control_mode_pair.first].updateControlMode(control_mode_pair.second);
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Control mode chnaged for wheel id : %d", control_mode_pair.first);
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Control mode changed for wheel id : %d", control_mode_pair.first);
     }
 
     controlLoopTaskAction(TaskAction::Resume);
