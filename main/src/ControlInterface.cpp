@@ -151,21 +151,22 @@ bool ControlInterface::GetOdoBroadcastStatus()
     constexpr size_t buffer_size = sizeof(uint8_t) + odo_broadcast_flags_t::size;
     std::vector<uint8_t> buffer = protocol.ReadData(buffer_size, 1000);
 
-    if (unlikely(buffer.size() < buffer_size))
+    if (unlikely(buffer.empty()))
     {
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Failed to read odo broadcast status");
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Odo broadcast status read failed : not enough data");
         protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
 
     const uint8_t motorID = buffer[0];
-    if (unlikely(motorID >= wheel_count))
+
+    // Ensure odo_broadcast_flags is properly sized
+    if (unlikely(odo_broadcast_flags.size() <= motorID))
     {
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Motor ID out of range");
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "odo_broadcast_flags not sized for motorID %d", motorID);
         protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
-
     size_t offset = 1;
 
     odo_broadcast_flags[motorID].from_bytes(buffer, offset);
