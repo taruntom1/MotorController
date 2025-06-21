@@ -61,6 +61,7 @@ private:
     odo_broadcast_flags_t odo_broadcast_flag;
 
     std::vector<uint8_t> cacheVctr; // to prevent allocation for each call
+    std::vector<float> motor_setpoints; // cache for motor setpoints
 
     void Ping();
     void start();

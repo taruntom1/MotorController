@@ -59,6 +59,7 @@ bool ControlInterface::GetControllerProperties()
 
     wheel_count = properties.numMotors;
     odo_broadcast_flags.resize(wheel_count);
+    motor_setpoints.resize(wheel_count); // resize setpoints vector here
 
     assert(ControllerPropertiesCallback && "ControllerPropertiesCallback must be set");
     ControllerPropertiesCallback(properties);
@@ -235,11 +236,10 @@ bool ControlInterface::GetWheelControlMode()
 
 bool ControlInterface::GetMotorSetpoints()
 {
-    std::vector<float> setpoints(wheel_count);
-    if (protocol.ReadData(reinterpret_cast<uint8_t *>(setpoints.data()), sizeof(float) * wheel_count))
+    if (protocol.ReadData(reinterpret_cast<uint8_t *>(motor_setpoints.data()), sizeof(float) * wheel_count))
     {
         assert(WheelSetpointCallback && "WheelSetpointCallback must be set");
-        WheelSetpointCallback(setpoints);
+        WheelSetpointCallback(motor_setpoints);
         return true;
     }
 
