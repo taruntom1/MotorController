@@ -183,6 +183,7 @@ bool ControlInterface::GetPIDConstants()
 
     if (unlikely(buffer.empty()))
     {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "PID constants read failed: buffer empty");
         protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
@@ -194,6 +195,7 @@ bool ControlInterface::GetPIDConstants()
     // Validate motor ID
     if (unlikely((motorID >= wheel_count) || pidType >= 2))
     {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Invalid motor ID (%d) or PID type (%d)", motorID, pidType);
         protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
@@ -236,7 +238,7 @@ bool ControlInterface::GetWheelControlMode()
 
 bool ControlInterface::GetMotorSetpoints()
 {
-    if (protocol.ReadData(reinterpret_cast<uint8_t *>(motor_setpoints.data()), sizeof(float) * wheel_count))
+    if (likely(protocol.ReadData(reinterpret_cast<uint8_t *>(motor_setpoints.data()), sizeof(float) * wheel_count)))
     {
         assert(WheelSetpointCallback && "WheelSetpointCallback must be set");
         WheelSetpointCallback(motor_setpoints);
@@ -374,6 +376,7 @@ void ControlInterface::CallFunction(Command commandType)
         break;
 
     default:
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Unknown command received: %d", static_cast<int>(commandType));
         break;
     }
 }
