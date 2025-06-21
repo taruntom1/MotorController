@@ -29,12 +29,14 @@ void ControlInterface::Ping()
 void ControlInterface::start()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Starting motor controller");
+    assert(ControllerRunCallback && "ControllerRunCallback must be set");
     ControllerRunCallback(true);
     protocol.SendCommand(Command::READ_SUCCESS);
 }
 void ControlInterface::stop()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Stopping motor controller");
+    assert(ControllerRunCallback && "ControllerRunCallback must be set");
     ControllerRunCallback(false);
     protocol.SendCommand(Command::READ_SUCCESS);
 }
@@ -58,6 +60,7 @@ bool ControlInterface::GetControllerProperties()
     wheel_count = properties.numMotors;
     odo_broadcast_flags.resize(wheel_count);
 
+    assert(ControllerPropertiesCallback && "ControllerPropertiesCallback must be set");
     ControllerPropertiesCallback(properties);
     protocol.SendCommand(Command::READ_SUCCESS);
     return true;
@@ -90,7 +93,7 @@ bool ControlInterface::GetWheelData()
     wheelData.from_bytes(buffer, offset);
 
     assert(wheelData.motor_id == wheel_id);
-
+    assert(WheelDataCallback && "WheelDataCallback must be set");
     WheelDataCallback(wheelData);
 
     odo_broadcast_flags.at(wheel_id) = wheelData.odoBroadcastStatus;
@@ -103,6 +106,7 @@ bool ControlInterface::GetWheelData()
 
 void ControlInterface::stopAllBroadcast()
 {
+    assert(OdoBroadcastCallbackBlocking && "OdoBroadcastCallbackBlocking must be set");
     OdoBroadcastCallbackBlocking(TaskAction::Suspend);
     protocol.SendCommand(Command::READ_SUCCESS);
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "All broadcasts stopped");
@@ -112,6 +116,7 @@ void ControlInterface::restoreAllBroadcast()
 {
     refreshBroadcastStatus();
     // if (odo_broadcast_flag.angle || odo_broadcast_flag.speed || odo_broadcast_flag.pwm_value)
+    assert(OdoBroadcastCallbackBlocking && "OdoBroadcastCallbackBlocking must be set");
     OdoBroadcastCallbackBlocking(TaskAction::Resume);
     protocol.SendCommand(Command::READ_SUCCESS);
 
@@ -134,6 +139,7 @@ void ControlInterface::refreshBroadcastStatus()
                                   ? TaskAction::Start
                                   : TaskAction::Stop;
 
+    assert(OdoBroadcastCallbackNonBlocking && "OdoBroadcastCallbackNonBlocking must be set");
     OdoBroadcastCallbackNonBlocking(action);
 }
 
@@ -195,6 +201,7 @@ bool ControlInterface::GetPIDConstants()
     constants.from_bytes(buffer, offset);
 
     // Store PID constants
+    assert(PIDConstantsCallback && "PIDConstantsCallback must be set");
     PIDConstantsCallback(motorID, static_cast<PIDType>(pidType), constants);
 
     protocol.SendCommand(Command::READ_SUCCESS);
@@ -220,6 +227,7 @@ bool ControlInterface::GetWheelControlMode()
     }
     ControlMode control_mode;
     from_bytes(control_mode, buffer, offset);
+    assert(WheelControlModeCallback && "WheelControlModeCallback must be set");
     WheelControlModeCallback(motorID, control_mode);
     protocol.SendCommand(Command::READ_SUCCESS);
     return true;
@@ -230,6 +238,7 @@ bool ControlInterface::GetMotorSetpoints()
     std::vector<float> setpoints(wheel_count);
     if (protocol.ReadData(reinterpret_cast<uint8_t *>(setpoints.data()), sizeof(float) * wheel_count))
     {
+        assert(WheelSetpointCallback && "WheelSetpointCallback must be set");
         WheelSetpointCallback(setpoints);
         return true;
     }
