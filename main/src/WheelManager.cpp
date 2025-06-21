@@ -155,7 +155,7 @@ void WheelManager::updateSetpoints(const std::vector<float> &setpoints)
         if (wheel)
         {
             if (i < setpoints.size())
-            wheel->updateSetpoint(setpoints[i]);
+                wheel->updateSetpoint(setpoints[i]);
             else
                 wheel->updateSetpoint(0.0f);
             i++;
@@ -311,6 +311,7 @@ bool WheelManager::createControlTask()
     {
         control_loop_run.store(true);
         xTaskCreate(controlTaskEntry, "Control Task", 2000, this, 5, &control_task_handle);
+        control_task_state_ = TaskState::Running;
         return true;
     }
     return false;
@@ -322,6 +323,7 @@ bool WheelManager::createOdoBroadcastTask()
     {
         odo_broadcast_run.store(true);
         xTaskCreate(odoBroadcastTaskEntry, "Odo Broadcast Task", 2500, this, 5, &odo_broadcast_task_handle);
+        odo_broadcast_task_state_ = TaskState::Running;
         return true;
     }
     return false;
@@ -356,7 +358,10 @@ bool WheelManager::handleTaskAction(TaskAction action,
     case TaskAction::Start:
         if (task_handle == nullptr || task_state == TaskState::Deleted)
         {
-            return task_creator();
+            bool created = task_creator();
+            if (created)
+                task_state = TaskState::Running;
+            return created;
         }
         return false;
 
@@ -365,6 +370,7 @@ bool WheelManager::handleTaskAction(TaskAction action,
         {
             vTaskDelete(task_handle);
             task_handle = nullptr;
+            task_state = TaskState::Deleted;
             return true;
         }
         return false;
@@ -372,7 +378,10 @@ bool WheelManager::handleTaskAction(TaskAction action,
     case TaskAction::Suspend:
         if (task_state == TaskState::Running)
         {
-            return suspend_handler();
+            bool suspended = suspend_handler();
+            if (suspended)
+                task_state = TaskState::Suspended;
+            return suspended;
         }
         return false;
 
@@ -381,6 +390,7 @@ bool WheelManager::handleTaskAction(TaskAction action,
         {
             run_flag.store(true);
             vTaskResume(task_handle);
+            task_state = TaskState::Running;
             return true;
         }
         return false;
