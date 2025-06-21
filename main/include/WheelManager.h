@@ -16,20 +16,20 @@ struct WheelManagerConfig
     frequency_t odo_broadcast_frequency;
 };
 
-constexpr enum class TaskAction {
+enum class TaskAction {
     Start,
     Stop,
     Suspend,
     Resume
 };
 
-constexpr enum class TaskState {
+enum class TaskState {
     Running,
     Suspended,
     Deleted
 };
 
-constexpr enum class wheel_manager_notifications : uint32_t {
+enum class wheel_manager_notifications : uint32_t {
     // Wheel updates
     NUM_WHEEL_UPDATE = (1 << 0),
     WHEEL_UPDATE = (1 << 1),
