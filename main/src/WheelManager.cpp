@@ -406,7 +406,11 @@ bool WheelManager::suspendAndWaitForControlLoopSuspend()
 
     eTaskState state = eTaskGetState(control_task_handle);
     if (state == eDeleted || state == eSuspended)
+    {
+        if (state == eDeleted)
+            control_task_handle = nullptr;
         return true;
+    }
 
     const uint32_t expected_notification = static_cast<uint32_t>(wheel_manager_notifications::CONTROL_LOOP_SUSPENDED);
     control_loop_run.store(false); // Stop the loop
@@ -428,7 +432,11 @@ bool WheelManager::suspendAndWaitForOdoBroadcastSuspend()
 
     eTaskState state = eTaskGetState(odo_broadcast_task_handle);
     if (state == eDeleted || state == eSuspended)
+    {
+        if (state == eDeleted)
+            odo_broadcast_task_handle = nullptr;
         return true;
+    }
 
     const uint32_t expected_notification = static_cast<uint32_t>(wheel_manager_notifications::ODO_BROADCAST_SUSPENDED);
     odo_broadcast_run.store(false); // Stop the loop
