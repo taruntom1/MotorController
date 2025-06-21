@@ -16,23 +16,20 @@ struct WheelManagerConfig
     frequency_t odo_broadcast_frequency;
 };
 
-enum class TaskAction
-{
+enum class TaskAction {
     Start,
     Stop,
     Suspend,
     Resume
 };
 
-enum class TaskState
-{
+enum class TaskState {
     Running,
     Suspended,
     Deleted
 };
 
-enum class wheel_manager_notifications : uint32_t
-{
+enum class wheel_manager_notifications : uint32_t {
     // Wheel updates
     NUM_WHEEL_UPDATE = (1 << 0),
     WHEEL_UPDATE = (1 << 1),
@@ -60,6 +57,7 @@ class WheelManager
 {
 public:
     WheelManager(WheelManagerConfig config);
+    ~WheelManager();
 
     void updateWheelCount(uint8_t count);
     void updateWheel(const wheel_data_t &wheel);
@@ -98,7 +96,7 @@ private:
     std::atomic<TickType_t> control_task_delay_ticks;
     std::atomic<TickType_t> odo_broadcast_task_delay_ticks;
 
-    std::vector<Wheel> wheels_;
+    std::vector<std::optional<Wheel>> wheels_;
     uint8_t wheel_count_{0};
 
     // Queue handles
@@ -142,4 +140,8 @@ private:
 
     bool suspendAndWaitForControlLoopSuspend();
     bool suspendAndWaitForOdoBroadcastSuspend();
+
+    void notifyWheelManager(wheel_manager_notifications notification) {
+        xTaskNotify(wheel_manage_task_handle, static_cast<uint32_t>(notification), eSetBits);
+    }
 };

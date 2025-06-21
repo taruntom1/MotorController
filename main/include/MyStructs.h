@@ -38,9 +38,9 @@ namespace detail
 
 struct odo_broadcast_flags_t
 {
-    bool angle;
-    bool speed;
-    bool pwm_value;
+    bool angle = false;
+    bool speed = false;
+    bool pwm_value = false;
 
     constexpr static size_t size = sizeof(angle) + sizeof(speed) +
                                    sizeof(pwm_value);

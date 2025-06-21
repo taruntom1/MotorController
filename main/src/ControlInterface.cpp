@@ -1,8 +1,10 @@
 #include "ControlInterface.h"
 #include "esp_log.h"
+#include "TimeSyncServer.h"
 #include <string.h>
 
 #define LOG_LOCAL_LEVEL ESP_LOG_DEBUG // Set local log level for this file
+
 
 static const char *TAG = "ControlInterface";
 
@@ -29,12 +31,14 @@ void ControlInterface::Ping()
 void ControlInterface::start()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Starting motor controller");
+    assert(ControllerRunCallback && "ControllerRunCallback must be set");
     ControllerRunCallback(true);
     protocol.SendCommand(Command::READ_SUCCESS);
 }
 void ControlInterface::stop()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Stopping motor controller");
+    assert(ControllerRunCallback && "ControllerRunCallback must be set");
     ControllerRunCallback(false);
     protocol.SendCommand(Command::READ_SUCCESS);
 }
@@ -57,7 +61,9 @@ bool ControlInterface::GetControllerProperties()
 
     wheel_count = properties.numMotors;
     odo_broadcast_flags.resize(wheel_count);
+    motor_setpoints.resize(wheel_count); // resize setpoints vector here
 
+    assert(ControllerPropertiesCallback && "ControllerPropertiesCallback must be set");
     ControllerPropertiesCallback(properties);
     protocol.SendCommand(Command::READ_SUCCESS);
     return true;
@@ -90,10 +96,10 @@ bool ControlInterface::GetWheelData()
     wheelData.from_bytes(buffer, offset);
 
     assert(wheelData.motor_id == wheel_id);
-
+    assert(WheelDataCallback && "WheelDataCallback must be set");
     WheelDataCallback(wheelData);
 
-    odo_broadcast_flags.at(wheel_id) = odo_broadcast_flag;
+    odo_broadcast_flags.at(wheel_id) = wheelData.odoBroadcastStatus;
     refreshBroadcastStatus();
 
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Motor data read successful for motor ID %d", wheel_id);
@@ -103,6 +109,7 @@ bool ControlInterface::GetWheelData()
 
 void ControlInterface::stopAllBroadcast()
 {
+    assert(OdoBroadcastCallbackBlocking && "OdoBroadcastCallbackBlocking must be set");
     OdoBroadcastCallbackBlocking(TaskAction::Suspend);
     protocol.SendCommand(Command::READ_SUCCESS);
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "All broadcasts stopped");
@@ -112,6 +119,7 @@ void ControlInterface::restoreAllBroadcast()
 {
     refreshBroadcastStatus();
     // if (odo_broadcast_flag.angle || odo_broadcast_flag.speed || odo_broadcast_flag.pwm_value)
+    assert(OdoBroadcastCallbackBlocking && "OdoBroadcastCallbackBlocking must be set");
     OdoBroadcastCallbackBlocking(TaskAction::Resume);
     protocol.SendCommand(Command::READ_SUCCESS);
 
@@ -120,51 +128,53 @@ void ControlInterface::restoreAllBroadcast()
 
 void ControlInterface::refreshBroadcastStatus()
 {
-    for (auto &flag : odo_broadcast_flags)
+    // Zero initialize aggregate flag
+    odo_broadcast_flag = {};
+
+    for (const auto &flag : odo_broadcast_flags)
     {
         odo_broadcast_flag |= flag;
     }
+
+    const TaskAction action = (odo_broadcast_flag.angle ||
+                               odo_broadcast_flag.speed ||
+                               odo_broadcast_flag.pwm_value)
+                                  ? TaskAction::Start
+                                  : TaskAction::Stop;
+
+    assert(OdoBroadcastCallbackNonBlocking && "OdoBroadcastCallbackNonBlocking must be set");
+    OdoBroadcastCallbackNonBlocking(action);
 }
 
 bool ControlInterface::GetOdoBroadcastStatus()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Reading odo broadcast status");
+
     constexpr size_t buffer_size = sizeof(uint8_t) + odo_broadcast_flags_t::size;
     std::vector<uint8_t> buffer = protocol.ReadData(buffer_size, 1000);
 
-    // Read motorID + broadcast flags in one read
     if (unlikely(buffer.empty()))
     {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Odo broadcast status read failed : not enough data");
         protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
 
-    uint8_t motorID = buffer[0];
-    if (unlikely(motorID >= wheel_count))
+    const uint8_t motorID = buffer[0];
+
+    // Ensure odo_broadcast_flags is properly sized
+    if (unlikely(odo_broadcast_flags.size() <= motorID))
     {
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Motor ID out of range");
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "odo_broadcast_flags not sized for motorID %d", motorID);
         protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
-
     size_t offset = 1;
 
     odo_broadcast_flags[motorID].from_bytes(buffer, offset);
     protocol.SendCommand(Command::READ_SUCCESS);
 
-    // Update aggregated broadcast status
-    odo_broadcast_flags_t &aggregatedStatus = odo_broadcast_flag;
-    memset(&aggregatedStatus, 0, sizeof(odo_broadcast_flags_t));
-
-    for (auto &odoBroadcastStatus : odo_broadcast_flags)
-    {
-        aggregatedStatus |= odoBroadcastStatus;
-    }
-
-    if (odo_broadcast_flag.angle || odo_broadcast_flag.speed || odo_broadcast_flag.pwm_value)
-        OdoBroadcastCallbackNonBlocking(TaskAction::Start);
-    else
-        OdoBroadcastCallbackNonBlocking(TaskAction::Stop);
+    refreshBroadcastStatus();
 
     return true;
 }
@@ -176,6 +186,7 @@ bool ControlInterface::GetPIDConstants()
 
     if (unlikely(buffer.empty()))
     {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "PID constants read failed: buffer empty");
         protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
@@ -187,6 +198,7 @@ bool ControlInterface::GetPIDConstants()
     // Validate motor ID
     if (unlikely((motorID >= wheel_count) || pidType >= 2))
     {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Invalid motor ID (%d) or PID type (%d)", motorID, pidType);
         protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
@@ -195,6 +207,7 @@ bool ControlInterface::GetPIDConstants()
     constants.from_bytes(buffer, offset);
 
     // Store PID constants
+    assert(PIDConstantsCallback && "PIDConstantsCallback must be set");
     PIDConstantsCallback(motorID, static_cast<PIDType>(pidType), constants);
 
     protocol.SendCommand(Command::READ_SUCCESS);
@@ -208,6 +221,7 @@ bool ControlInterface::GetWheelControlMode()
     if (unlikely(buffer.empty()))
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to read motor ID and control mode");
+        protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
 
@@ -216,10 +230,12 @@ bool ControlInterface::GetWheelControlMode()
     if (unlikely(motorID >= wheel_count))
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Invalid motor ID %d", motorID);
+        protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
     ControlMode control_mode;
     from_bytes(control_mode, buffer, offset);
+    assert(WheelControlModeCallback && "WheelControlModeCallback must be set");
     WheelControlModeCallback(motorID, control_mode);
     protocol.SendCommand(Command::READ_SUCCESS);
     return true;
@@ -227,10 +243,10 @@ bool ControlInterface::GetWheelControlMode()
 
 bool ControlInterface::GetMotorSetpoints()
 {
-    std::vector<float> setpoints(wheel_count);
-    if (protocol.ReadData(reinterpret_cast<uint8_t *>(setpoints.data()), sizeof(float) * wheel_count))
+    if (likely(protocol.ReadData(reinterpret_cast<uint8_t *>(motor_setpoints.data()), sizeof(float) * wheel_count)))
     {
-        WheelSetpointCallback(setpoints);
+        assert(WheelSetpointCallback && "WheelSetpointCallback must be set");
+        WheelSetpointCallback(motor_setpoints);
         return true;
     }
 
@@ -408,6 +424,7 @@ void ControlInterface::CallFunction(Command commandType)
         break;
 
     default:
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Unknown command received: %d", static_cast<int>(commandType));
         break;
     }
 }
