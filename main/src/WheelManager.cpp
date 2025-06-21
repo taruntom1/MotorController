@@ -149,14 +149,15 @@ void WheelManager::updatePIDConstants(uint8_t id, PIDType type, pid_constants_t 
 
 void WheelManager::updateSetpoints(const std::vector<float> &setpoints)
 {
-    if (setpoints.size() < wheels_.size())
-        return;
     int i = 0;
     for (auto &wheel : wheels_)
     {
         if (wheel)
         {
+            if (i < setpoints.size())
             wheel->updateSetpoint(setpoints[i]);
+            else
+                wheel->updateSetpoint(0.0f);
             i++;
         }
     }
