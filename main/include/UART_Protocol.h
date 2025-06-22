@@ -52,7 +52,8 @@ private:
         .stop_bits = UART_STOP_BITS_1,
         .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
         .rx_flow_ctrl_thresh = 0,
-        .source_clk = UART_SCLK_APB, // Ensure all fields are initialized
+        .source_clk = UART_SCLK_APB,                       // Ensure all fields are initialized
+        .flags = {.allow_pd = 0, .backup_before_sleep = 0} // Flags for power management
     };
     QueueHandle_t uart_queue;
     static void uartTask(void *arg);
@@ -83,7 +84,7 @@ public:
      * @param data Pointer to the data array to send.
      * @param length Length of the data array.
      */
-    void SendData(const std::vector<uint8_t>& data);
+    void SendData(const std::vector<uint8_t> &data);
     void SendData(const uint8_t *data, const uint8_t length);
 
     /**
