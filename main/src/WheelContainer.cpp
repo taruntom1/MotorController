@@ -13,11 +13,13 @@ WheelContainer::WheelContainer()
 WheelContainer::~WheelContainer()
 {
     // Delete queues
-    if (wheel_data_queue != nullptr) {
+    if (wheel_data_queue != nullptr)
+    {
         vQueueDelete(wheel_data_queue);
         wheel_data_queue = nullptr;
     }
-    if (control_mode_queue != nullptr) {
+    if (control_mode_queue != nullptr)
+    {
         vQueueDelete(control_mode_queue);
         control_mode_queue = nullptr;
     }
@@ -35,7 +37,8 @@ void WheelContainer::updateWheelCount(uint8_t count)
 void WheelContainer::updateWheel(const wheel_data_t &wheel)
 {
     uint8_t i = wheel.motor_id;
-    if (i >= wheel_count_) {
+    if (i >= wheel_count_)
+    {
         return;
     }
 
@@ -54,7 +57,8 @@ void WheelContainer::updateWheel(const wheel_data_t &wheel)
 
 void WheelContainer::updateControlMode(uint8_t id, ControlMode mode)
 {
-    if (id >= wheel_count_) {
+    if (id >= wheel_count_)
+    {
         return;
     }
 
@@ -68,7 +72,8 @@ void WheelContainer::updateControlMode(uint8_t id, ControlMode mode)
 
 void WheelContainer::updatePIDConstants(uint8_t id, PIDType type, pid_constants_t constants)
 {
-    if (id >= wheels_.size() || !(wheels_.at(id).has_value())) {
+    if (id >= wheels_.size() || !(wheels_.at(id).has_value()))
+    {
         return;
     }
 
@@ -78,13 +83,17 @@ void WheelContainer::updatePIDConstants(uint8_t id, PIDType type, pid_constants_
 
 void WheelContainer::updateSetpoints(const std::vector<float> &setpoints)
 {
-    int i = 0;    for (auto &wheel : wheels_)
+    int i = 0;
+    for (auto &wheel : wheels_)
     {
         if (wheel)
         {
-            if (i < setpoints.size()) {
+            if (i < setpoints.size())
+            {
                 wheel->updateSetpoint(setpoints[i]);
-            } else {
+            }
+            else
+            {
                 wheel->updateSetpoint(0.0f);
             }
             i++;
@@ -95,8 +104,8 @@ void WheelContainer::updateSetpoints(const std::vector<float> &setpoints)
 void WheelContainer::updateControlLoopFrequency(frequency_t frequency)
 {
     // Calculate delay in ticks - use 1000Hz as default tick rate if not available
-    current_control_delay_ticks = (1000 / frequency) / 10; // Assuming 1000Hz tick rate
-    
+    current_control_delay_ticks = (xPortGetTickRateHz() / frequency); // Assuming 1000Hz tick rate
+
     for (auto &wheel_opt : wheels_)
     {
         if (wheel_opt)

@@ -7,7 +7,7 @@ ControllerManager& ControllerManager::getInstance()
 }
 
 ControllerManager::ControllerManager()
-    : wheel_manager_({100, 50}),
+    : wheel_manager_({1, 1}),
       control_interface_({576000, UART_NUM_0, 2048, 44, 43, 0xAA, 100})
 {
     connectCallbacks();

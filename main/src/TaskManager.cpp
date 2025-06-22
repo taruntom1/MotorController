@@ -136,12 +136,12 @@ void TaskManager::odoBroadcastTask()
 
 void TaskManager::updateOdoBroadcastFrequency(frequency_t frequency)
 {
-    odo_broadcast_task_delay_ticks = pdMS_TO_TICKS(1000 / frequency);
+    odo_broadcast_task_delay_ticks = pdMS_TO_TICKS(xPortGetTickRateHz() / frequency);
 }
 
 void TaskManager::updateControlLoopFrequency(frequency_t frequency)
 {
-    control_task_delay_ticks = pdMS_TO_TICKS(1000 / frequency);
+    control_task_delay_ticks = pdMS_TO_TICKS(xPortGetTickRateHz() / frequency);
     wheel_container_.updateControlLoopFrequency(frequency);
 }
 

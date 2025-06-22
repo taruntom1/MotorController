@@ -52,7 +52,7 @@ private:
     static constexpr const char *TAG = "WheelContainer";
     static constexpr size_t DEFAULT_WHEEL_DATA_QUEUE_SIZE = 3;
     static constexpr size_t DEFAULT_CONTROL_MODE_QUEUE_SIZE = 4;
-    static constexpr TickType_t DEFAULT_CONTROL_DELAY_TICKS = 100;
+    static constexpr TickType_t DEFAULT_CONTROL_DELAY_TICKS = pdMS_TO_TICKS(1000);
     static constexpr TickType_t DEFAULT_QUEUE_SEND_TIMEOUT_TICKS = 10;
     static constexpr TickType_t DEFAULT_QUEUE_RECEIVE_TIMEOUT_TICKS = 2;
 
