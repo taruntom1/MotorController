@@ -50,6 +50,11 @@ public:
 
 private:
     static constexpr const char *TAG = "WheelContainer";
+    static constexpr size_t DEFAULT_WHEEL_DATA_QUEUE_SIZE = 3;
+    static constexpr size_t DEFAULT_CONTROL_MODE_QUEUE_SIZE = 4;
+    static constexpr TickType_t DEFAULT_CONTROL_DELAY_TICKS = 100;
+    static constexpr TickType_t DEFAULT_QUEUE_SEND_TIMEOUT_TICKS = 10;
+    static constexpr TickType_t DEFAULT_QUEUE_RECEIVE_TIMEOUT_TICKS = 2;
 
     std::vector<std::optional<Wheel>> wheels_;
     uint8_t wheel_count_{0};
@@ -62,5 +67,5 @@ private:
     std::atomic<uint8_t> pending_wheel_count{0};
 
     // Current control loop delay for new wheels
-    TickType_t current_control_delay_ticks{100}; // Default 100ms
+    TickType_t current_control_delay_ticks{DEFAULT_CONTROL_DELAY_TICKS}; // Default 100ms
 };

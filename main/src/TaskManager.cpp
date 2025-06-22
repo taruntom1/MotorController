@@ -8,7 +8,7 @@ TaskManager::TaskManager(TaskManagerConfig config, WheelContainer &wheelContaine
       control_task_delay_ticks(pdMS_TO_TICKS(1000 / config.control_loop_frequency)),
       odo_broadcast_task_delay_ticks(pdMS_TO_TICKS(1000 / config.odo_broadcast_frequency))
 {
-    xTaskCreate(wheelManageTaskEntry, "WheelManager", 4096, this, 6, &wheel_manage_task_handle);
+    xTaskCreate(wheelManageTaskEntry, "WheelManager", WHEEL_MANAGE_TASK_STACK_SIZE, this, WHEEL_MANAGE_TASK_PRIORITY, &wheel_manage_task_handle);
 }
 
 TaskManager::~TaskManager()
@@ -228,7 +228,7 @@ bool TaskManager::createControlTask()
     if (control_task_handle == nullptr)
     {
         control_loop_run.store(true);
-        BaseType_t result = xTaskCreate(controlTaskEntry, "Control Task", 2000, this, 5, &control_task_handle);
+        BaseType_t result = xTaskCreate(controlTaskEntry, "Control Task", CONTROL_TASK_STACK_SIZE, this, CONTROL_TASK_PRIORITY, &control_task_handle);
         if (result == pdPASS)
         {
             control_task_state_ = TaskState::Running;
@@ -249,7 +249,7 @@ bool TaskManager::createOdoBroadcastTask()
     if (odo_broadcast_task_handle == nullptr)
     {
         odo_broadcast_run.store(true);
-        BaseType_t result = xTaskCreate(odoBroadcastTaskEntry, "Odo Broadcast Task", 2500, this, 5, &odo_broadcast_task_handle);
+        BaseType_t result = xTaskCreate(odoBroadcastTaskEntry, "Odo Broadcast Task", ODO_BROADCAST_TASK_STACK_SIZE, this, ODO_BROADCAST_TASK_PRIORITY, &odo_broadcast_task_handle);
         if (result == pdPASS)
         {
             odo_broadcast_task_state_ = TaskState::Running;
@@ -354,7 +354,7 @@ bool TaskManager::suspendAndWaitForControlLoopSuspend()
     uint32_t notification = 0;
     while (!(notification & expected_notification))
     {
-        if (xTaskNotifyWait(0, expected_notification, &notification, 100) == pdFAIL)
+        if (xTaskNotifyWait(0, expected_notification, &notification, pdMS_TO_TICKS(TASK_SUSPENSION_TIMEOUT_MS)) == pdFAIL)
             return false; // Timeout or failure
     }
 
@@ -380,7 +380,7 @@ bool TaskManager::suspendAndWaitForOdoBroadcastSuspend()
     uint32_t notification = 0;
     while (!(notification & expected_notification))
     {
-        if (xTaskNotifyWait(0, expected_notification, &notification, 100) == pdFAIL)
+        if (xTaskNotifyWait(0, expected_notification, &notification, pdMS_TO_TICKS(TASK_SUSPENSION_TIMEOUT_MS)) == pdFAIL)
             return false; // Timeout or failure
     }
 

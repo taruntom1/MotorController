@@ -44,6 +44,6 @@ public:
     void setOdoBroadcastCallback(std::function<void(const std::pair<timestamp_t, std::vector<odometry_t>> &)> cb);
 
 private:
-    std::unique_ptr<WheelContainer> wheel_container_;
-    std::unique_ptr<TaskManager> task_manager_;
+    WheelContainer wheel_container_;
+    TaskManager task_manager_;
 };

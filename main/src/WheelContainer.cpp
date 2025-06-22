@@ -1,10 +1,12 @@
 #include "WheelContainer.h"
 #include "esp_log.h"
 
+#define LOG_LOCAL_LEVEL ESP_LOG_INFO
+
 WheelContainer::WheelContainer()
-    : wheel_data_queue(xQueueCreate(3, wheel_data_t::size)),
-      control_mode_queue(xQueueCreate(4, sizeof(std::pair<uint8_t, ControlMode>))),
-      current_control_delay_ticks(100) // 100 ticks default
+    : wheel_data_queue(xQueueCreate(DEFAULT_WHEEL_DATA_QUEUE_SIZE, wheel_data_t::size)),
+      control_mode_queue(xQueueCreate(DEFAULT_CONTROL_MODE_QUEUE_SIZE, sizeof(std::pair<uint8_t, ControlMode>))),
+      current_control_delay_ticks(DEFAULT_CONTROL_DELAY_TICKS)
 {
 }
 
@@ -25,7 +27,7 @@ WheelContainer::~WheelContainer()
 
 void WheelContainer::updateWheelCount(uint8_t count)
 {
-    ESP_LOGI(TAG, "Allocating memory for %d motors", count);
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Allocating memory for %d motors", count);
     wheel_count_ = count;
     wheels_.resize(wheel_count_);
 }
@@ -40,11 +42,11 @@ void WheelContainer::updateWheel(const wheel_data_t &wheel)
     auto &wheel_slot = wheels_[i];
     if (wheel_slot.has_value())
     {
-        ESP_LOGI(TAG, "Replacing existing wheel at index: %d", i);
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Replacing existing wheel at index: %d", i);
     }
     else
     {
-        ESP_LOGI(TAG, "Creating new wheel at index: %d", i);
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Creating new wheel at index: %d", i);
     }
 
     wheel_slot.emplace(&wheel, current_control_delay_ticks);
@@ -60,7 +62,7 @@ void WheelContainer::updateControlMode(uint8_t id, ControlMode mode)
     if (wheel)
     {
         wheel->updateControlMode(mode);
-        ESP_LOGI(TAG, "Control mode changed for wheel id : %d", id);
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Control mode changed for wheel id : %d", id);
     }
 }
 
@@ -71,7 +73,7 @@ void WheelContainer::updatePIDConstants(uint8_t id, PIDType type, pid_constants_
     }
 
     wheels_.at(id)->updatePIDConstants(type, constants);
-    ESP_LOGI(TAG, "PID constants changed for wheel : %d, Type %d", id, static_cast<uint8_t>(type));
+    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "PID constants changed for wheel : %d, Type %d", id, static_cast<uint8_t>(type));
 }
 
 void WheelContainer::updateSetpoints(const std::vector<float> &setpoints)
@@ -133,13 +135,13 @@ std::vector<odometry_t> WheelContainer::collectOdometry()
 
 void WheelContainer::queueWheelData(const wheel_data_t &wheel)
 {
-    xQueueSendToBack(wheel_data_queue, &wheel, 10);
+    xQueueSendToBack(wheel_data_queue, &wheel, DEFAULT_QUEUE_SEND_TIMEOUT_TICKS);
 }
 
 void WheelContainer::queueControlMode(uint8_t id, ControlMode mode)
 {
     std::pair<uint8_t, ControlMode> control_mode_pair(id, mode);
-    xQueueSendToBack(control_mode_queue, &control_mode_pair, 10);
+    xQueueSendToBack(control_mode_queue, &control_mode_pair, DEFAULT_QUEUE_SEND_TIMEOUT_TICKS);
 }
 
 void WheelContainer::setPendingWheelCount(uint8_t count)
@@ -168,7 +170,7 @@ void WheelContainer::processWheelDataQueue()
 void WheelContainer::processControlModeQueue()
 {
     std::pair<uint8_t, ControlMode> control_mode_pair;
-    if (xQueueReceive(control_mode_queue, &control_mode_pair, 2) == pdTRUE)
+    if (xQueueReceive(control_mode_queue, &control_mode_pair, DEFAULT_QUEUE_RECEIVE_TIMEOUT_TICKS) == pdTRUE)
     {
         updateControlMode(control_mode_pair.first, control_mode_pair.second);
     }

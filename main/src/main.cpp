@@ -9,6 +9,16 @@
 
 #define LOG_LOCAL_LEVEL ESP_LOG_INFO // Set local log level for this file
 
+// Static constants for configuration
+static constexpr size_t CPU_STATS_BUFFER_SIZE = 1024;
+static constexpr TickType_t CPU_STATS_LOG_INTERVAL_MS = 4000;
+static constexpr UBaseType_t CPU_LOGGER_TASK_STACK_SIZE = 3000;
+static constexpr UBaseType_t CPU_LOGGER_TASK_PRIORITY = 1;
+static constexpr uint32_t UART_BAUD_RATE = 576000;
+static constexpr int UART_RX_PIN = 44;
+static constexpr int UART_TX_PIN = 43;
+static constexpr uint32_t TIME_COUNTER_DIVISOR = 10; // For 0.1 microsecond units
+
 protocol_config config;
 
 void print_all_tasks_stack_high_watermark()
@@ -44,7 +54,7 @@ void print_all_tasks_stack_high_watermark()
 
 void cpu_usage_logger_task(void *param)
 {
-    char *buffer = new char[1024]; // Increase size if you have many tasks
+    char *buffer = new char[CPU_STATS_BUFFER_SIZE];
     if (!buffer)
     {
         ESP_LOGE("CPU_STATS", "Failed to allocate stats buffer");
@@ -57,7 +67,7 @@ void cpu_usage_logger_task(void *param)
         vTaskGetRunTimeStats(buffer);
         ESP_LOGI("CPU_STATS", "\nTask\t\tTime\t\t%% CPU\n%s", buffer);
         //print_all_tasks_stack_high_watermark();
-        vTaskDelay(pdMS_TO_TICKS(4000)); // Log every 4 second
+        vTaskDelay(pdMS_TO_TICKS(CPU_STATS_LOG_INTERVAL_MS));
     }
 
     // Shouldn't reach here, but clean up just in case
@@ -68,7 +78,7 @@ void cpu_usage_logger_task(void *param)
 // Return time in 0.1 microsecond units (FreeRTOS expects increasing counter)
 uint32_t get_run_time_counter_value(void)
 {
-    return (uint32_t)(esp_timer_get_time() / 10);
+    return (uint32_t)(esp_timer_get_time() / TIME_COUNTER_DIVISOR);
 }
 
 // Required stub — nothing needed if using esp_timer
@@ -77,16 +87,15 @@ void configure_timer_for_run_time_stats(void)
     // Nothing to configure
 }
 
-ControllerManager *controller_manager;
-
 extern "C" void app_main()
 {
     config.port = UART_NUM_0;
-    config.baudRate = 576000;
-    config.pinRX = 44;
-    config.pinTX = 43;
+    config.baudRate = UART_BAUD_RATE;
+    config.pinRX = UART_RX_PIN;
+    config.pinTX = UART_TX_PIN;
 
-    controller_manager = new ControllerManager();
+    // Initialize the singleton ControllerManager
+    ControllerManager::getInstance();
 
     // MPU6050Reader::Config cfg{};
     // cfg.i2c_port = I2C_NUM_0;
@@ -104,5 +113,5 @@ extern "C" void app_main()
 
     // static MPU6050Reader imuReader(cfg, &imu_data);
 
-    xTaskCreate(cpu_usage_logger_task, "cpu_logger", 3000, NULL, 1, NULL);
+    xTaskCreate(cpu_usage_logger_task, "cpu_logger", CPU_LOGGER_TASK_STACK_SIZE, NULL, CPU_LOGGER_TASK_PRIORITY, NULL);
 }

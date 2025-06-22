@@ -84,6 +84,13 @@ public:
 
 private:
     static constexpr const char *TAG = "TaskManager";
+    static constexpr UBaseType_t WHEEL_MANAGE_TASK_STACK_SIZE = 4096;
+    static constexpr UBaseType_t WHEEL_MANAGE_TASK_PRIORITY = 6;
+    static constexpr UBaseType_t CONTROL_TASK_STACK_SIZE = 3072;
+    static constexpr UBaseType_t CONTROL_TASK_PRIORITY = 5;
+    static constexpr UBaseType_t ODO_BROADCAST_TASK_STACK_SIZE = 2048;
+    static constexpr UBaseType_t ODO_BROADCAST_TASK_PRIORITY = 4;
+    static constexpr TickType_t TASK_SUSPENSION_TIMEOUT_MS = 500;
 
     WheelContainer& wheel_container_;
 
