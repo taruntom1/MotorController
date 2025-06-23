@@ -170,7 +170,7 @@ void WheelContainer::processPendingWheelCount()
 void WheelContainer::processWheelDataQueue()
 {
     wheel_data_t wheel_data;
-    while (xQueueReceive(wheel_data_queue, &wheel_data, 0) == pdTRUE)
+    while (xQueueReceive(wheel_data_queue, &wheel_data, DEFAULT_QUEUE_RECEIVE_TIMEOUT_TICKS) == pdTRUE)
     {
         updateWheel(wheel_data);
     }

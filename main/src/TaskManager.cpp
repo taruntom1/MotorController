@@ -433,7 +433,7 @@ void TaskManager::processTaskStateQueue()
 
     // Process pending commands in the queue (with limit to prevent starvation)
     while (processed_count < max_commands_per_iteration &&
-           xQueueReceive(task_state_queue_, &command, 0) == pdPASS)
+           xQueueReceive(task_state_queue_, &command, 10) == pdPASS)
     {
         bool success = false;
         switch (command.task_type)
@@ -448,8 +448,6 @@ void TaskManager::processTaskStateQueue()
             ESP_LOGW(TAG, "ProcessQueue: Unknown task type %d", static_cast<int>(command.task_type));
             break;
         }
-
-        // Note: Detailed logging is handled in handleTaskAction, no need for redundant logs here
 
         processed_count++;
     }

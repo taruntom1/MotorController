@@ -54,7 +54,7 @@ private:
     static constexpr size_t DEFAULT_CONTROL_MODE_QUEUE_SIZE = 4;
     static constexpr TickType_t DEFAULT_CONTROL_DELAY_TICKS = pdMS_TO_TICKS(1000);
     static constexpr TickType_t DEFAULT_QUEUE_SEND_TIMEOUT_TICKS = 10;
-    static constexpr TickType_t DEFAULT_QUEUE_RECEIVE_TIMEOUT_TICKS = 2;
+    static constexpr TickType_t DEFAULT_QUEUE_RECEIVE_TIMEOUT_TICKS = 10;
 
     std::vector<std::optional<Wheel>> wheels_;
     uint8_t wheel_count_{0};
