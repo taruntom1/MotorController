@@ -5,7 +5,6 @@
 
 #define LOG_LOCAL_LEVEL ESP_LOG_DEBUG // Set local log level for this file
 
-
 static const char *TAG = "ControlInterface";
 
 ControlInterface::ControlInterface(protocol_config config)
@@ -95,12 +94,12 @@ bool ControlInterface::GetWheelData()
     wheel_data_t wheelData;
     wheelData.from_bytes(buffer, offset);
 
+    odo_broadcast_flags.at(wheel_id) = wheelData.odoBroadcastStatus;
+    refreshBroadcastStatus();
+
     assert(wheelData.motor_id == wheel_id);
     assert(WheelDataCallback && "WheelDataCallback must be set");
     WheelDataCallback(wheelData);
-
-    odo_broadcast_flags.at(wheel_id) = wheelData.odoBroadcastStatus;
-    refreshBroadcastStatus();
 
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Motor data read successful for motor ID %d", wheel_id);
     protocol.SendCommand(Command::READ_SUCCESS);

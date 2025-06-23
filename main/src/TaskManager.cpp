@@ -413,7 +413,7 @@ bool TaskManager::enqueueTaskStateCommand(TaskType task_type, TaskAction action)
 
     // Use a small timeout instead of immediate return to handle brief queue congestion
     const TickType_t queue_timeout = pdMS_TO_TICKS(10);
-    if (xQueueSend(task_state_queue_, &command, queue_timeout) != pdPASS)
+    if (xQueueSendToBack(task_state_queue_, &command, queue_timeout) != pdPASS)
     {
         ESP_LOGW(TAG, "Queue: Failed to enqueue %s %s command (queue full/timeout)",
                  taskTypeToString(task_type), taskActionToString(action));
@@ -433,7 +433,7 @@ void TaskManager::processTaskStateQueue()
 
     // Process pending commands in the queue (with limit to prevent starvation)
     while (processed_count < max_commands_per_iteration &&
-           xQueueReceive(task_state_queue_, &command, 10) == pdPASS)
+           xQueueReceive(task_state_queue_, &command, pdMS_TO_TICKS(50)) == pdPASS)
     {
         bool success = false;
         switch (command.task_type)
