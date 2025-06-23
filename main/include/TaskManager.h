@@ -137,14 +137,14 @@ private:
     void odoBroadcastTask();
 
     bool createControlTask();
-    bool createOdoBroadcastTask();    // Helper method for common task creation logic
+    bool createOdoBroadcastTask(); // Helper method for common task creation logic
     bool createTaskHelper(TaskFunction_t taskFunction,
-                         const char* taskName,
-                         UBaseType_t stackSize,
-                         UBaseType_t priority,
-                         TaskHandle_t& taskHandle,
-                         TaskState& taskState,
-                         std::atomic<bool>& runFlag);
+                          const char *taskName,
+                          UBaseType_t stackSize,
+                          UBaseType_t priority,
+                          TaskHandle_t &taskHandle,
+                          TaskState &taskState,
+                          std::atomic<bool> &runFlag);
 
     bool handleTaskAction(TaskAction action,
                           TaskHandle_t &task_handle,
@@ -165,6 +165,11 @@ private:
     {
         xTaskNotify(wheel_manage_task_handle, static_cast<uint32_t>(notification), eSetBits);
     }
+    // Helper methods for logging
+    const char *taskActionToString(TaskAction action);
+    const char *taskStateToString(TaskState state);
+    const char *taskTypeToString(TaskType type);
+    const char *getTaskName(TaskHandle_t &task_handle);
 
     bool enqueueTaskStateCommand(TaskType task_type, TaskAction action);
 };
