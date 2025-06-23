@@ -8,6 +8,13 @@ TaskManager::TaskManager(TaskManagerConfig config, WheelContainer &wheelContaine
       control_task_delay_ticks(pdMS_TO_TICKS(1000 / config.control_loop_frequency)),
       odo_broadcast_task_delay_ticks(pdMS_TO_TICKS(1000 / config.odo_broadcast_frequency))
 {
+    // Create task state queue
+    task_state_queue_ = xQueueCreate(TASK_STATE_QUEUE_LENGTH, sizeof(TaskStateCommand));
+    if (task_state_queue_ == nullptr)
+    {
+        ESP_LOGE(TAG, "Failed to create task state queue");
+    }
+
     xTaskCreate(wheelManageTaskEntry, "WheelManager", WHEEL_MANAGE_TASK_STACK_SIZE, this, WHEEL_MANAGE_TASK_PRIORITY, &wheel_manage_task_handle);
 }
 
@@ -33,6 +40,12 @@ TaskManager::~TaskManager()
         vTaskDelete(wheel_manage_task_handle);
         wheel_manage_task_handle = nullptr;
     }
+    // Clean up task state queue
+    if (task_state_queue_ != nullptr)
+    {
+        vQueueDelete(task_state_queue_);
+        task_state_queue_ = nullptr;
+    }
 }
 
 void TaskManager::wheelManageTaskEntry(void *pvParameters)
@@ -46,6 +59,12 @@ void TaskManager::wheelManageTask()
     {
         uint32_t ulNotificationValue;
         xTaskNotifyWait(0, ULONG_MAX, &ulNotificationValue, portMAX_DELAY);
+
+        if (ulNotificationValue & static_cast<uint32_t>(task_manager_notifications::PROCESS_TASK_STATE_QUEUE))
+        {
+            processTaskStateQueue();
+        }
+
         if (ulNotificationValue & static_cast<uint32_t>(task_manager_notifications::NUM_WHEEL_UPDATE))
         {
             controlLoopTaskAction(TaskAction::Suspend);
@@ -56,8 +75,6 @@ void TaskManager::wheelManageTask()
 
             controlLoopTaskAction(TaskAction::Resume);
             odoBroadcastTaskAction(TaskAction::Resume);
-            odoBroadcastTaskAction(TaskAction::Start);
-            controlLoopTaskAction(TaskAction::Start);
         }
 
         if (ulNotificationValue & static_cast<uint32_t>(task_manager_notifications::WHEEL_UPDATE))
@@ -81,8 +98,6 @@ void TaskManager::wheelManageTask()
             controlLoopTaskAction(TaskAction::Resume);
             odoBroadcastTaskAction(TaskAction::Resume);
         }
-
-        handleTaskActionNotification(ulNotificationValue);
     }
 }
 
@@ -145,82 +160,14 @@ void TaskManager::updateControlLoopFrequency(frequency_t frequency)
     wheel_container_.updateControlLoopFrequency(frequency);
 }
 
-void TaskManager::handleTaskActionNotification(uint32_t notification)
-{
-    if (notification & static_cast<uint32_t>(task_manager_notifications::START_CONTROL_LOOP))
-    {
-        controlLoopTaskAction(TaskAction::Start);
-    }
-    else if (notification & static_cast<uint32_t>(task_manager_notifications::STOP_CONTROL_LOOP))
-    {
-        controlLoopTaskAction(TaskAction::Stop);
-    }
-    else if (notification & static_cast<uint32_t>(task_manager_notifications::SUSPEND_CONTROL_LOOP))
-    {
-        controlLoopTaskAction(TaskAction::Suspend);
-    }
-    else if (notification & static_cast<uint32_t>(task_manager_notifications::RESUME_CONTROL_LOOP))
-    {
-        controlLoopTaskAction(TaskAction::Resume);
-    }
-    if (notification & static_cast<uint32_t>(task_manager_notifications::START_ODO_BROADCAST))
-    {
-        odoBroadcastTaskAction(TaskAction::Start);
-    }
-    else if (notification & static_cast<uint32_t>(task_manager_notifications::STOP_ODO_BROADCAST))
-    {
-        odoBroadcastTaskAction(TaskAction::Stop);
-    }
-    else if (notification & static_cast<uint32_t>(task_manager_notifications::SUSPEND_ODO_BROADCAST))
-    {
-        odoBroadcastTaskAction(TaskAction::Suspend);
-    }
-    else if (notification & static_cast<uint32_t>(task_manager_notifications::RESUME_ODO_BROADCAST))
-    {
-        odoBroadcastTaskAction(TaskAction::Resume);
-    }
-}
-
 void TaskManager::controlLoopTaskActionNonBlocking(TaskAction action)
 {
-    switch (action)
-    {
-    case TaskAction::Start:
-        notifyTaskManager(task_manager_notifications::START_CONTROL_LOOP);
-        break;
-    case TaskAction::Stop:
-        notifyTaskManager(task_manager_notifications::STOP_CONTROL_LOOP);
-        break;
-    case TaskAction::Suspend:
-        notifyTaskManager(task_manager_notifications::SUSPEND_CONTROL_LOOP);
-        break;
-    case TaskAction::Resume:
-        notifyTaskManager(task_manager_notifications::RESUME_CONTROL_LOOP);
-        break;
-    default:
-        break;
-    }
+    enqueueTaskStateCommand(TaskType::ControlLoop, action);
 }
 
 void TaskManager::odoBroadcastTaskActionNonBlocking(TaskAction action)
 {
-    switch (action)
-    {
-    case TaskAction::Start:
-        notifyTaskManager(task_manager_notifications::START_ODO_BROADCAST);
-        break;
-    case TaskAction::Stop:
-        notifyTaskManager(task_manager_notifications::STOP_ODO_BROADCAST);
-        break;
-    case TaskAction::Suspend:
-        notifyTaskManager(task_manager_notifications::SUSPEND_ODO_BROADCAST);
-        break;
-    case TaskAction::Resume:
-        notifyTaskManager(task_manager_notifications::RESUME_ODO_BROADCAST);
-        break;
-    default:
-        break;
-    }
+    enqueueTaskStateCommand(TaskType::OdoBroadcast, action);
 }
 
 bool TaskManager::createControlTask()
@@ -267,16 +214,24 @@ bool TaskManager::createOdoBroadcastTask()
 
 bool TaskManager::controlLoopTaskAction(TaskAction action)
 {
-    return handleTaskAction(action, control_task_handle, control_task_state_, [this]()
+    bool result = handleTaskAction(action, control_task_handle, control_task_state_, [this]()
                             { return createControlTask(); }, control_loop_run, [this]()
                             { return suspendAndWaitForControlLoopSuspend(); });
+    if (result) {
+        ESP_LOGI(TAG, "controlLoopTaskAction: State changed for action %d", static_cast<int>(action));
+    }
+    return result;
 }
 
 bool TaskManager::odoBroadcastTaskAction(TaskAction action)
 {
-    return handleTaskAction(action, odo_broadcast_task_handle, odo_broadcast_task_state_, [this]()
+    bool result = handleTaskAction(action, odo_broadcast_task_handle, odo_broadcast_task_state_, [this]()
                             { return createOdoBroadcastTask(); }, odo_broadcast_run, [this]()
                             { return suspendAndWaitForOdoBroadcastSuspend(); });
+    if (result) {
+        ESP_LOGI(TAG, "odoBroadcastTaskAction: State changed for action %d", static_cast<int>(action));
+    }
+    return result;
 }
 
 bool TaskManager::handleTaskAction(TaskAction action,
@@ -286,8 +241,9 @@ bool TaskManager::handleTaskAction(TaskAction action,
                                    std::atomic<bool> &run_flag,
                                    std::function<bool()> suspend_handler)
 {
-    if (task_handle == nullptr && action != TaskAction::Start)
+    if (task_handle == nullptr && action != TaskAction::Start) {
         return false;
+    }
 
     switch (action)
     {
@@ -295,8 +251,10 @@ bool TaskManager::handleTaskAction(TaskAction action,
         if (task_handle == nullptr || task_state == TaskState::Deleted)
         {
             bool created = task_creator();
-            if (created)
+            if (created) {
                 task_state = TaskState::Running;
+                ESP_LOGI(TAG, "Task started and set to Running");
+            }
             return created;
         }
         return false;
@@ -307,6 +265,7 @@ bool TaskManager::handleTaskAction(TaskAction action,
             vTaskDelete(task_handle);
             task_handle = nullptr;
             task_state = TaskState::Deleted;
+            ESP_LOGI(TAG, "Task stopped and set to Deleted");
             return true;
         }
         return false;
@@ -315,8 +274,10 @@ bool TaskManager::handleTaskAction(TaskAction action,
         if (task_state == TaskState::Running)
         {
             bool suspended = suspend_handler();
-            if (suspended)
+            if (suspended) {
                 task_state = TaskState::Suspended;
+                ESP_LOGI(TAG, "Task suspended and set to Suspended");
+            }
             return suspended;
         }
         return false;
@@ -327,6 +288,7 @@ bool TaskManager::handleTaskAction(TaskAction action,
             run_flag.store(true);
             vTaskResume(task_handle);
             task_state = TaskState::Running;
+            ESP_LOGI(TAG, "Task resumed and set to Running");
             return true;
         }
         return false;
@@ -385,4 +347,47 @@ bool TaskManager::suspendAndWaitForOdoBroadcastSuspend()
     }
 
     return true;
+}
+
+bool TaskManager::enqueueTaskStateCommand(TaskType task_type, TaskAction action)
+{
+    if (task_state_queue_ == nullptr)
+    {
+        ESP_LOGE(TAG, "Task state queue not initialized");
+        return false;
+    }
+
+    TaskStateCommand command = {task_type, action};
+
+    if (xQueueSend(task_state_queue_, &command, 0) != pdPASS)
+    {
+        ESP_LOGW(TAG, "Failed to enqueue task state command - queue full");
+        return false;
+    }
+
+    // Trigger queue processing
+    notifyTaskManager(task_manager_notifications::PROCESS_TASK_STATE_QUEUE);
+    return true;
+}
+
+void TaskManager::processTaskStateQueue()
+{
+    TaskStateCommand command;
+
+    // Process all pending commands in the queue
+    while (xQueueReceive(task_state_queue_, &command, 0) == pdPASS)
+    {
+        switch (command.task_type)
+        {
+        case TaskType::ControlLoop:
+            controlLoopTaskAction(command.action);
+            break;
+        case TaskType::OdoBroadcast:
+            odoBroadcastTaskAction(command.action);
+            break;
+        default:
+            ESP_LOGW(TAG, "Unknown task type in queue command");
+            break;
+        }
+    }
 }

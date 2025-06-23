@@ -6,6 +6,7 @@
 #include "MyStructs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/queue.h"
 
 // Forward declaration
 class WheelContainer;
@@ -29,25 +30,28 @@ enum class TaskState {
     Deleted
 };
 
+enum class TaskType {
+    ControlLoop,
+    OdoBroadcast
+};
+
+struct TaskStateCommand {
+    TaskType task_type;
+    TaskAction action;
+};
+
 enum class task_manager_notifications : uint32_t {
     // Wheel updates
     NUM_WHEEL_UPDATE = (1 << 0),
     WHEEL_UPDATE = (1 << 1),
     CONTROL_MODE_UPDATE = (1 << 2),
 
-    // Control loop notifications
-    START_CONTROL_LOOP = (1 << 3),
-    STOP_CONTROL_LOOP = (1 << 4),
-    SUSPEND_CONTROL_LOOP = (1 << 5),
-    RESUME_CONTROL_LOOP = (1 << 6),
-    CONTROL_LOOP_SUSPENDED = (1 << 7),
+    // Task state queue processing
+    PROCESS_TASK_STATE_QUEUE = (1 << 3),
 
-    // Odometer broadcast notifications
-    START_ODO_BROADCAST = (1 << 8),
-    STOP_ODO_BROADCAST = (1 << 9),
-    SUSPEND_ODO_BROADCAST = (1 << 10),
-    RESUME_ODO_BROADCAST = (1 << 11),
-    ODO_BROADCAST_SUSPENDED = (1 << 12),
+    // Task suspension confirmations (still needed for internal communication)
+    CONTROL_LOOP_SUSPENDED = (1 << 4),
+    ODO_BROADCAST_SUSPENDED = (1 << 5),
 };
 
 /**
@@ -91,8 +95,12 @@ private:
     static constexpr UBaseType_t ODO_BROADCAST_TASK_STACK_SIZE = 2048;
     static constexpr UBaseType_t ODO_BROADCAST_TASK_PRIORITY = 4;
     static constexpr TickType_t TASK_SUSPENSION_TIMEOUT_MS = 500;
+    static constexpr UBaseType_t TASK_STATE_QUEUE_LENGTH = 10;
 
     WheelContainer& wheel_container_;
+
+    // Task state queue
+    QueueHandle_t task_state_queue_;
 
     // Task handles
     TaskHandle_t wheel_manage_task_handle = nullptr;
@@ -124,15 +132,13 @@ private:
     void odoBroadcastTask();
 
     bool createControlTask();
-    bool createOdoBroadcastTask();
-
-    bool handleTaskAction(TaskAction action,
+    bool createOdoBroadcastTask();    bool handleTaskAction(TaskAction action,
                           TaskHandle_t &task_handle,
                           TaskState &task_state,
                           std::function<bool()> task_creator,
                           std::atomic<bool> &run_flag,
                           std::function<bool()> suspend_handler);
-    void handleTaskActionNotification(uint32_t notification);
+    void processTaskStateQueue();
 
     bool suspendAndWaitForControlLoopSuspend();
     bool suspendAndWaitForOdoBroadcastSuspend();
@@ -140,4 +146,6 @@ private:
     void notifyTaskManager(task_manager_notifications notification) {
         xTaskNotify(wheel_manage_task_handle, static_cast<uint32_t>(notification), eSetBits);
     }
+
+    bool enqueueTaskStateCommand(TaskType task_type, TaskAction action);
 };
