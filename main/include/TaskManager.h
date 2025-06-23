@@ -172,4 +172,7 @@ private:
     const char *getTaskName(TaskHandle_t &task_handle);
 
     bool enqueueTaskStateCommand(TaskType task_type, TaskAction action);
+
+    // Helper for suspending/resuming tasks and processing wheel container actions
+    void suspendResumeAndProcessHelper(const std::function<void()>& processFunc);
 };

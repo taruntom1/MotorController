@@ -66,6 +66,15 @@ void TaskManager::wheelManageTaskEntry(void *pvParameters)
     static_cast<TaskManager *>(pvParameters)->wheelManageTask();
 }
 
+void TaskManager::suspendResumeAndProcessHelper(const std::function<void()>& processFunc)
+{
+    controlLoopTaskAction(TaskAction::Suspend);
+    odoBroadcastTaskAction(TaskAction::Suspend);
+    processFunc();
+    controlLoopTaskAction(TaskAction::Resume);
+    odoBroadcastTaskAction(TaskAction::Resume);
+}
+
 void TaskManager::wheelManageTask()
 {
     while (true)
@@ -80,36 +89,23 @@ void TaskManager::wheelManageTask()
 
         if (ulNotificationValue & static_cast<uint32_t>(task_manager_notifications::NUM_WHEEL_UPDATE))
         {
-            controlLoopTaskAction(TaskAction::Suspend);
-            odoBroadcastTaskAction(TaskAction::Suspend);
-
-            // Now safely update the wheel count
-            wheel_container_.processPendingWheelCount();
-
-            controlLoopTaskAction(TaskAction::Resume);
-            odoBroadcastTaskAction(TaskAction::Resume);
+            suspendResumeAndProcessHelper([this]() {
+                wheel_container_.processPendingWheelCount();
+            });
         }
 
         if (ulNotificationValue & static_cast<uint32_t>(task_manager_notifications::WHEEL_UPDATE))
         {
-            controlLoopTaskAction(TaskAction::Suspend);
-            odoBroadcastTaskAction(TaskAction::Suspend);
-
-            wheel_container_.processWheelDataQueue();
-
-            controlLoopTaskAction(TaskAction::Resume);
-            odoBroadcastTaskAction(TaskAction::Resume);
+            suspendResumeAndProcessHelper([this]() {
+                wheel_container_.processWheelDataQueue();
+            });
         }
 
         if (ulNotificationValue & static_cast<uint32_t>(task_manager_notifications::CONTROL_MODE_UPDATE))
         {
-            controlLoopTaskAction(TaskAction::Suspend);
-            odoBroadcastTaskAction(TaskAction::Suspend);
-
-            wheel_container_.processControlModeQueue();
-
-            controlLoopTaskAction(TaskAction::Resume);
-            odoBroadcastTaskAction(TaskAction::Resume);
+            suspendResumeAndProcessHelper([this]() {
+                wheel_container_.processControlModeQueue();
+            });
         }
     }
 }
