@@ -17,30 +17,35 @@ struct TaskManagerConfig
     frequency_t odo_broadcast_frequency;
 };
 
-enum class TaskAction {
+enum class TaskAction
+{
     Start,
     Stop,
     Suspend,
     Resume
 };
 
-enum class TaskState {
+enum class TaskState
+{
     Running,
     Suspended,
     Deleted
 };
 
-enum class TaskType {
+enum class TaskType
+{
     ControlLoop,
     OdoBroadcast
 };
 
-struct TaskStateCommand {
+struct TaskStateCommand
+{
     TaskType task_type;
     TaskAction action;
 };
 
-enum class task_manager_notifications : uint32_t {
+enum class task_manager_notifications : uint32_t
+{
     // Wheel updates
     NUM_WHEEL_UPDATE = (1 << 0),
     WHEEL_UPDATE = (1 << 1),
@@ -60,7 +65,7 @@ enum class task_manager_notifications : uint32_t {
 class TaskManager
 {
 public:
-    TaskManager(TaskManagerConfig config, WheelContainer& wheelContainer);
+    TaskManager(TaskManagerConfig config, WheelContainer &wheelContainer);
     ~TaskManager();
 
     // Task actions : Blocking
@@ -97,7 +102,7 @@ private:
     static constexpr TickType_t TASK_SUSPENSION_TIMEOUT_MS = 500;
     static constexpr UBaseType_t TASK_STATE_QUEUE_LENGTH = 10;
 
-    WheelContainer& wheel_container_;
+    WheelContainer &wheel_container_;
 
     // Task state queue
     QueueHandle_t task_state_queue_;
@@ -132,7 +137,16 @@ private:
     void odoBroadcastTask();
 
     bool createControlTask();
-    bool createOdoBroadcastTask();    bool handleTaskAction(TaskAction action,
+    bool createOdoBroadcastTask();    // Helper method for common task creation logic
+    bool createTaskHelper(TaskFunction_t taskFunction,
+                         const char* taskName,
+                         UBaseType_t stackSize,
+                         UBaseType_t priority,
+                         TaskHandle_t& taskHandle,
+                         TaskState& taskState,
+                         std::atomic<bool>& runFlag);
+
+    bool handleTaskAction(TaskAction action,
                           TaskHandle_t &task_handle,
                           TaskState &task_state,
                           std::function<bool()> task_creator,
@@ -142,8 +156,13 @@ private:
 
     bool suspendAndWaitForControlLoopSuspend();
     bool suspendAndWaitForOdoBroadcastSuspend();
+    bool suspendAndWaitForTaskSuspend(TaskHandle_t &task_handle,
+                                      task_manager_notifications notification_type,
+                                      std::atomic<bool> &run_flag,
+                                      const char *timeout_log_tag);
 
-    void notifyTaskManager(task_manager_notifications notification) {
+    void notifyTaskManager(task_manager_notifications notification)
+    {
         xTaskNotify(wheel_manage_task_handle, static_cast<uint32_t>(notification), eSetBits);
     }
 

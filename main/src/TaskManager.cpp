@@ -13,33 +13,46 @@ TaskManager::TaskManager(TaskManagerConfig config, WheelContainer &wheelContaine
     if (task_state_queue_ == nullptr)
     {
         ESP_LOGE(TAG, "Failed to create task state queue");
+        // Consider throwing an exception or setting an error flag
+        return;
     }
 
-    xTaskCreate(wheelManageTaskEntry, "WheelManager", WHEEL_MANAGE_TASK_STACK_SIZE, this, WHEEL_MANAGE_TASK_PRIORITY, &wheel_manage_task_handle);
+    // Create wheel manager task with error checking
+    BaseType_t result = xTaskCreate(wheelManageTaskEntry, "WheelManager",
+                                    WHEEL_MANAGE_TASK_STACK_SIZE, this,
+                                    WHEEL_MANAGE_TASK_PRIORITY, &wheel_manage_task_handle);
+    if (result != pdPASS)
+    {
+        ESP_LOGE(TAG, "Failed to create wheel manager task");
+        // Clean up queue if task creation fails
+        if (task_state_queue_ != nullptr)
+        {
+            vQueueDelete(task_state_queue_);
+            task_state_queue_ = nullptr;
+        }
+    }
 }
 
 TaskManager::~TaskManager()
 {
-    // Stop and delete control task if running
+    // Stop tasks gracefully before deleting them
     if (control_task_handle != nullptr)
     {
-        control_loop_run.store(false);
-        vTaskDelete(control_task_handle);
-        control_task_handle = nullptr;
+        controlLoopTaskAction(TaskAction::Stop);
     }
-    // Stop and delete odometry broadcast task if running
+
     if (odo_broadcast_task_handle != nullptr)
     {
-        odo_broadcast_run.store(false);
-        vTaskDelete(odo_broadcast_task_handle);
-        odo_broadcast_task_handle = nullptr;
+        odoBroadcastTaskAction(TaskAction::Stop);
     }
-    // Delete wheel manager task if running
+
+    // Delete wheel manager task
     if (wheel_manage_task_handle != nullptr)
     {
         vTaskDelete(wheel_manage_task_handle);
         wheel_manage_task_handle = nullptr;
     }
+
     // Clean up task state queue
     if (task_state_queue_ != nullptr)
     {
@@ -113,7 +126,7 @@ void TaskManager::controlTask()
     {
         wheel_container_.executeControlLoop();
 
-        if (control_loop_run.load(std::memory_order_acquire) == false)
+        if (!control_loop_run.load(std::memory_order_acquire))
         {
             notifyTaskManager(task_manager_notifications::CONTROL_LOOP_SUSPENDED);
             vTaskSuspend(NULL);
@@ -140,7 +153,7 @@ void TaskManager::odoBroadcastTask()
         assert(odoBroadcastCallback && "odoBroadcastCallback must be set before calling");
         odoBroadcastCallback(odoBroadcastData);
 
-        if (odo_broadcast_run.load(std::memory_order_acquire) == false)
+        if (!odo_broadcast_run.load(std::memory_order_acquire))
         {
             notifyTaskManager(task_manager_notifications::ODO_BROADCAST_SUSPENDED);
             vTaskSuspend(NULL);
@@ -151,13 +164,31 @@ void TaskManager::odoBroadcastTask()
 
 void TaskManager::updateOdoBroadcastFrequency(frequency_t frequency)
 {
-    odo_broadcast_task_delay_ticks = pdMS_TO_TICKS(xPortGetTickRateHz() / frequency);
+    if (frequency > 0)
+    {
+        odo_broadcast_task_delay_ticks.store(pdMS_TO_TICKS(xPortGetTickRateHz() / frequency),
+                                             std::memory_order_release);
+        ESP_LOGI(TAG, "Odo broadcast frequency updated to %d Hz", frequency);
+    }
+    else
+    {
+        ESP_LOGW(TAG, "Invalid odo broadcast frequency: %d Hz", frequency);
+    }
 }
 
 void TaskManager::updateControlLoopFrequency(frequency_t frequency)
 {
-    control_task_delay_ticks = pdMS_TO_TICKS(xPortGetTickRateHz() / frequency);
-    wheel_container_.updateControlLoopFrequency(frequency);
+    if (frequency > 0)
+    {
+        control_task_delay_ticks.store(pdMS_TO_TICKS(xPortGetTickRateHz() / frequency),
+                                       std::memory_order_release);
+        wheel_container_.updateControlLoopFrequency(frequency);
+        ESP_LOGI(TAG, "Control loop frequency updated to %d Hz", frequency);
+    }
+    else
+    {
+        ESP_LOGW(TAG, "Invalid control loop frequency: %d Hz", frequency);
+    }
 }
 
 void TaskManager::controlLoopTaskActionNonBlocking(TaskAction action)
@@ -170,54 +201,60 @@ void TaskManager::odoBroadcastTaskActionNonBlocking(TaskAction action)
     enqueueTaskStateCommand(TaskType::OdoBroadcast, action);
 }
 
-bool TaskManager::createControlTask()
+// Helper method for common task creation logic
+bool TaskManager::createTaskHelper(TaskFunction_t taskFunction,
+                                   const char *taskName,
+                                   UBaseType_t stackSize,
+                                   UBaseType_t priority,
+                                   TaskHandle_t &taskHandle,
+                                   TaskState &taskState,
+                                   std::atomic<bool> &runFlag)
 {
-    if (control_task_handle == nullptr)
+    if (taskHandle == nullptr)
     {
-        control_loop_run.store(true);
-        BaseType_t result = xTaskCreate(controlTaskEntry, "Control Task", CONTROL_TASK_STACK_SIZE, this, CONTROL_TASK_PRIORITY, &control_task_handle);
+        runFlag.store(true, std::memory_order_release);
+        BaseType_t result = xTaskCreate(taskFunction, taskName, stackSize, this, priority, &taskHandle);
         if (result == pdPASS)
         {
-            control_task_state_ = TaskState::Running;
+            taskState = TaskState::Running;
+            ESP_LOGI(TAG, "%s created successfully", taskName);
             return true;
         }
         else
         {
-            control_loop_run.store(false);
-            control_task_handle = nullptr;
+            runFlag.store(false, std::memory_order_release);
+            taskHandle = nullptr;
+            ESP_LOGE(TAG, "Failed to create %s, error: %d", taskName, result);
             return false;
         }
     }
+    ESP_LOGW(TAG, "%s already exists", taskName);
     return false;
+}
+
+bool TaskManager::createControlTask()
+{
+    return createTaskHelper(controlTaskEntry, "Control Task",
+                            CONTROL_TASK_STACK_SIZE, CONTROL_TASK_PRIORITY,
+                            control_task_handle, control_task_state_,
+                            control_loop_run);
 }
 
 bool TaskManager::createOdoBroadcastTask()
 {
-    if (odo_broadcast_task_handle == nullptr)
-    {
-        odo_broadcast_run.store(true);
-        BaseType_t result = xTaskCreate(odoBroadcastTaskEntry, "Odo Broadcast Task", ODO_BROADCAST_TASK_STACK_SIZE, this, ODO_BROADCAST_TASK_PRIORITY, &odo_broadcast_task_handle);
-        if (result == pdPASS)
-        {
-            odo_broadcast_task_state_ = TaskState::Running;
-            return true;
-        }
-        else
-        {
-            odo_broadcast_run.store(false);
-            odo_broadcast_task_handle = nullptr;
-            return false;
-        }
-    }
-    return false;
+    return createTaskHelper(odoBroadcastTaskEntry, "Odo Broadcast Task",
+                            ODO_BROADCAST_TASK_STACK_SIZE, ODO_BROADCAST_TASK_PRIORITY,
+                            odo_broadcast_task_handle, odo_broadcast_task_state_,
+                            odo_broadcast_run);
 }
 
 bool TaskManager::controlLoopTaskAction(TaskAction action)
 {
     bool result = handleTaskAction(action, control_task_handle, control_task_state_, [this]()
-                            { return createControlTask(); }, control_loop_run, [this]()
-                            { return suspendAndWaitForControlLoopSuspend(); });
-    if (result) {
+                                   { return createControlTask(); }, control_loop_run, [this]()
+                                   { return suspendAndWaitForControlLoopSuspend(); });
+    if (result)
+    {
         ESP_LOGI(TAG, "controlLoopTaskAction: State changed for action %d", static_cast<int>(action));
     }
     return result;
@@ -226,9 +263,10 @@ bool TaskManager::controlLoopTaskAction(TaskAction action)
 bool TaskManager::odoBroadcastTaskAction(TaskAction action)
 {
     bool result = handleTaskAction(action, odo_broadcast_task_handle, odo_broadcast_task_state_, [this]()
-                            { return createOdoBroadcastTask(); }, odo_broadcast_run, [this]()
-                            { return suspendAndWaitForOdoBroadcastSuspend(); });
-    if (result) {
+                                   { return createOdoBroadcastTask(); }, odo_broadcast_run, [this]()
+                                   { return suspendAndWaitForOdoBroadcastSuspend(); });
+    if (result)
+    {
         ESP_LOGI(TAG, "odoBroadcastTaskAction: State changed for action %d", static_cast<int>(action));
     }
     return result;
@@ -241,7 +279,10 @@ bool TaskManager::handleTaskAction(TaskAction action,
                                    std::atomic<bool> &run_flag,
                                    std::function<bool()> suspend_handler)
 {
-    if (task_handle == nullptr && action != TaskAction::Start) {
+    // Early return for invalid combinations
+    if (task_handle == nullptr && action != TaskAction::Start)
+    {
+        ESP_LOGW(TAG, "Cannot perform action %d on non-existent task", static_cast<int>(action));
         return false;
     }
 
@@ -251,22 +292,33 @@ bool TaskManager::handleTaskAction(TaskAction action,
         if (task_handle == nullptr || task_state == TaskState::Deleted)
         {
             bool created = task_creator();
-            if (created) {
+            if (created)
+            {
                 task_state = TaskState::Running;
                 ESP_LOGI(TAG, "Task started and set to Running");
             }
+            else
+            {
+                ESP_LOGE(TAG, "Failed to create task");
+            }
             return created;
         }
+        ESP_LOGW(TAG, "Task already exists and is not deleted");
         return false;
 
     case TaskAction::Stop:
-        if (task_state != TaskState::Deleted && suspend_handler())
+        if (task_state != TaskState::Deleted)
         {
-            vTaskDelete(task_handle);
-            task_handle = nullptr;
-            task_state = TaskState::Deleted;
-            ESP_LOGI(TAG, "Task stopped and set to Deleted");
-            return true;
+            bool suspended = suspend_handler();
+            if (suspended)
+            {
+                vTaskDelete(task_handle);
+                task_handle = nullptr;
+                task_state = TaskState::Deleted;
+                ESP_LOGI(TAG, "Task stopped and set to Deleted");
+                return true;
+            }
+            ESP_LOGE(TAG, "Failed to suspend task before deletion");
         }
         return false;
 
@@ -274,79 +326,82 @@ bool TaskManager::handleTaskAction(TaskAction action,
         if (task_state == TaskState::Running)
         {
             bool suspended = suspend_handler();
-            if (suspended) {
+            if (suspended)
+            {
                 task_state = TaskState::Suspended;
                 ESP_LOGI(TAG, "Task suspended and set to Suspended");
             }
+            else
+            {
+                ESP_LOGE(TAG, "Failed to suspend task");
+            }
             return suspended;
         }
+        ESP_LOGW(TAG, "Task is not in Running state, cannot suspend");
         return false;
 
     case TaskAction::Resume:
         if (task_state == TaskState::Suspended)
         {
-            run_flag.store(true);
+            run_flag.store(true, std::memory_order_release);
             vTaskResume(task_handle);
             task_state = TaskState::Running;
             ESP_LOGI(TAG, "Task resumed and set to Running");
             return true;
         }
+        ESP_LOGW(TAG, "Task is not in Suspended state, cannot resume");
         return false;
     }
 
     return false;
 }
 
-bool TaskManager::suspendAndWaitForControlLoopSuspend()
+bool TaskManager::suspendAndWaitForTaskSuspend(TaskHandle_t &task_handle,
+                                               task_manager_notifications notification_type,
+                                               std::atomic<bool> &run_flag,
+                                               const char *timeout_log_tag)
 {
-    if (control_task_handle == nullptr)
+    if (task_handle == nullptr)
         return true;
 
-    eTaskState state = eTaskGetState(control_task_handle);
+    eTaskState state = eTaskGetState(task_handle);
     if (state == eDeleted || state == eSuspended)
     {
         if (state == eDeleted)
-            control_task_handle = nullptr;
+            task_handle = nullptr;
         return true;
     }
 
-    const uint32_t expected_notification = static_cast<uint32_t>(task_manager_notifications::CONTROL_LOOP_SUSPENDED);
-    control_loop_run.store(false); // Stop the loop
+    const uint32_t expected_notification = static_cast<uint32_t>(notification_type);
+    run_flag.store(false, std::memory_order_release); // Stop the loop
 
     uint32_t notification = 0;
+    const TickType_t timeout_ticks = pdMS_TO_TICKS(TASK_SUSPENSION_TIMEOUT_MS);
+
     while (!(notification & expected_notification))
     {
-        if (xTaskNotifyWait(0, expected_notification, &notification, pdMS_TO_TICKS(TASK_SUSPENSION_TIMEOUT_MS)) == pdFAIL)
+        if (xTaskNotifyWait(0, expected_notification, &notification, timeout_ticks) == pdFAIL)
+        {
+            ESP_LOGE(TAG, "Timeout waiting for %s suspension", timeout_log_tag);
             return false; // Timeout or failure
+        }
     }
 
     return true;
 }
 
+bool TaskManager::suspendAndWaitForControlLoopSuspend()
+{
+    return suspendAndWaitForTaskSuspend(control_task_handle,
+                                        task_manager_notifications::CONTROL_LOOP_SUSPENDED,
+                                        control_loop_run, "control loop");
+}
+
 bool TaskManager::suspendAndWaitForOdoBroadcastSuspend()
 {
-    if (odo_broadcast_task_handle == nullptr)
-        return true;
-
-    eTaskState state = eTaskGetState(odo_broadcast_task_handle);
-    if (state == eDeleted || state == eSuspended)
-    {
-        if (state == eDeleted)
-            odo_broadcast_task_handle = nullptr;
-        return true;
-    }
-
-    const uint32_t expected_notification = static_cast<uint32_t>(task_manager_notifications::ODO_BROADCAST_SUSPENDED);
-    odo_broadcast_run.store(false); // Stop the loop
-
-    uint32_t notification = 0;
-    while (!(notification & expected_notification))
-    {
-        if (xTaskNotifyWait(0, expected_notification, &notification, pdMS_TO_TICKS(TASK_SUSPENSION_TIMEOUT_MS)) == pdFAIL)
-            return false; // Timeout or failure
-    }
-
-    return true;
+    return suspendAndWaitForTaskSuspend(odo_broadcast_task_handle,
+                                        task_manager_notifications::ODO_BROADCAST_SUSPENDED,
+                                        odo_broadcast_run, "odometry broadcast");
 }
 
 bool TaskManager::enqueueTaskStateCommand(TaskType task_type, TaskAction action)
@@ -359,9 +414,11 @@ bool TaskManager::enqueueTaskStateCommand(TaskType task_type, TaskAction action)
 
     TaskStateCommand command = {task_type, action};
 
-    if (xQueueSend(task_state_queue_, &command, 0) != pdPASS)
+    // Use a small timeout instead of immediate return to handle brief queue congestion
+    const TickType_t queue_timeout = pdMS_TO_TICKS(10);
+    if (xQueueSend(task_state_queue_, &command, queue_timeout) != pdPASS)
     {
-        ESP_LOGW(TAG, "Failed to enqueue task state command - queue full");
+        ESP_LOGW(TAG, "Failed to enqueue task state command - queue full or timeout");
         return false;
     }
 
@@ -373,21 +430,40 @@ bool TaskManager::enqueueTaskStateCommand(TaskType task_type, TaskAction action)
 void TaskManager::processTaskStateQueue()
 {
     TaskStateCommand command;
+    uint8_t processed_count = 0;
+    const uint8_t max_commands_per_iteration = 5; // Prevent excessive processing in one go
 
-    // Process all pending commands in the queue
-    while (xQueueReceive(task_state_queue_, &command, 0) == pdPASS)
+    // Process pending commands in the queue (with limit to prevent starvation)
+    while (processed_count < max_commands_per_iteration &&
+           xQueueReceive(task_state_queue_, &command, 0) == pdPASS)
     {
+        bool success = false;
         switch (command.task_type)
         {
         case TaskType::ControlLoop:
-            controlLoopTaskAction(command.action);
+            success = controlLoopTaskAction(command.action);
             break;
         case TaskType::OdoBroadcast:
-            odoBroadcastTaskAction(command.action);
+            success = odoBroadcastTaskAction(command.action);
             break;
         default:
-            ESP_LOGW(TAG, "Unknown task type in queue command");
+            ESP_LOGW(TAG, "Unknown task type %d in queue command", static_cast<int>(command.task_type));
             break;
         }
+
+        if (!success)
+        {
+            ESP_LOGW(TAG, "Failed to execute task action %d for task type %d",
+                     static_cast<int>(command.action), static_cast<int>(command.task_type));
+        }
+
+        processed_count++;
+    }
+
+    // If we hit the limit, trigger another processing cycle
+    if (processed_count >= max_commands_per_iteration &&
+        uxQueueMessagesWaiting(task_state_queue_) > 0)
+    {
+        notifyTaskManager(task_manager_notifications::PROCESS_TASK_STATE_QUEUE);
     }
 }
