@@ -66,7 +66,7 @@ void TaskManager::wheelManageTaskEntry(void *pvParameters)
     static_cast<TaskManager *>(pvParameters)->wheelManageTask();
 }
 
-void TaskManager::suspendResumeAndProcessHelper(const std::function<void()>& processFunc)
+void TaskManager::suspendResumeAndProcessHelper(const std::function<void()> &processFunc)
 {
     controlLoopTaskAction(TaskAction::Suspend);
     odoBroadcastTaskAction(TaskAction::Suspend);
@@ -89,23 +89,20 @@ void TaskManager::wheelManageTask()
 
         if (ulNotificationValue & static_cast<uint32_t>(task_manager_notifications::NUM_WHEEL_UPDATE))
         {
-            suspendResumeAndProcessHelper([this]() {
-                wheel_container_.processPendingWheelCount();
-            });
+            suspendResumeAndProcessHelper([this]()
+                                          { wheel_container_.processPendingWheelCount(); });
         }
 
         if (ulNotificationValue & static_cast<uint32_t>(task_manager_notifications::WHEEL_UPDATE))
         {
-            suspendResumeAndProcessHelper([this]() {
-                wheel_container_.processWheelDataQueue();
-            });
+            suspendResumeAndProcessHelper([this]()
+                                          { wheel_container_.processWheelDataQueue(); });
         }
 
         if (ulNotificationValue & static_cast<uint32_t>(task_manager_notifications::CONTROL_MODE_UPDATE))
         {
-            suspendResumeAndProcessHelper([this]() {
-                wheel_container_.processControlModeQueue();
-            });
+            suspendResumeAndProcessHelper([this]()
+                                          { wheel_container_.processControlModeQueue(); });
         }
     }
 }
@@ -121,14 +118,14 @@ void TaskManager::controlTask()
     while (true)
     {
         wheel_container_.executeControlLoop();
+        vTaskDelayUntil(&last_wake_time, control_task_delay_ticks.load(std::memory_order_acquire));
 
         if (!control_loop_run.load(std::memory_order_acquire))
         {
             notifyTaskManager(task_manager_notifications::CONTROL_LOOP_SUSPENDED);
             vTaskSuspend(NULL);
         }
-        vTaskDelayUntil(&last_wake_time, control_task_delay_ticks.load(std::memory_order_acquire));
-    }
+        }
 }
 
 void TaskManager::odoBroadcastTaskEntry(void *pvParameters)
@@ -148,13 +145,12 @@ void TaskManager::odoBroadcastTask()
 
         assert(odoBroadcastCallback && "odoBroadcastCallback must be set before calling");
         odoBroadcastCallback(odoBroadcastData);
-
+        vTaskDelayUntil(&last_wake_time, odo_broadcast_task_delay_ticks.load(std::memory_order_acquire));
         if (!odo_broadcast_run.load(std::memory_order_acquire))
         {
             notifyTaskManager(task_manager_notifications::ODO_BROADCAST_SUSPENDED);
             vTaskSuspend(NULL);
         }
-        vTaskDelayUntil(&last_wake_time, odo_broadcast_task_delay_ticks.load(std::memory_order_acquire));
     }
 }
 
