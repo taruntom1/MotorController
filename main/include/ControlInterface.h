@@ -10,7 +10,38 @@
 #include "TimeSyncServer.h"
 #include "TaskManager.h"
 
+#include <stdexcept>
+#include <string>
+#include <format>
+
 enum class TaskAction;
+
+// Custom exception classes for ControlInterface
+class ControlInterfaceException : public std::runtime_error
+{
+public:
+    using std::runtime_error::runtime_error;
+};
+
+class DataReadException : public ControlInterfaceException
+{
+public:
+    explicit DataReadException(const std::string &message) : ControlInterfaceException("Data read failed: " + message) {}
+};
+
+class InvalidMotorIdException : public ControlInterfaceException
+{
+public:
+    explicit InvalidMotorIdException(uint8_t motorId, uint8_t maxId)
+        : ControlInterfaceException(std::format("Invalid motor ID {}, max allowed: {}", motorId, maxId - 1)) {}
+};
+
+class InvalidPIDTypeException : public ControlInterfaceException
+{
+public:
+    explicit InvalidPIDTypeException(uint8_t pidType)
+        : ControlInterfaceException(std::format("Invalid PID type: {}", pidType)) {}
+};
 
 class ControlInterface
 {
@@ -64,20 +95,30 @@ private:
     std::vector<uint8_t> cacheVctr;     // to prevent allocation for each call
     std::vector<float> motor_setpoints; // cache for motor setpoints
 
+    // Helper methods for exception handling
+    template<typename Func>
+    std::vector<uint8_t> safeReadData(size_t size, uint32_t timeout, const std::string& operation, Func&& converter);
+
+    template<typename Func>
+    void safeExecuteWithFailureResponse(const std::string& operation, Func&& func);
+
+    void sendProtocolCommand(Command cmd, const std::string& operation);
+    void sendProtocolData(const std::vector<uint8_t>& data, const std::string& operation);
+
     void Ping();
     void start();
     void stop();
-    bool GetControllerProperties();
+    void GetControllerProperties();
     // bool SendControllerProperties();
-    bool GetWheelData();
+    void GetWheelData();
     // bool SendWheelData();
-    bool GetPIDConstants();
-    bool GetWheelControlMode();
-    bool GetMotorSetpoints();
+    void GetPIDConstants();
+    void GetWheelControlMode();
+    void GetMotorSetpoints();
     void stopAllBroadcast();
     void restoreAllBroadcast();
     void refreshBroadcastStatus();
-    bool GetOdoBroadcastStatus();
+    void GetOdoBroadcastStatus();
     void CallFunction(Command commandType);
 
     // Callback functions for different

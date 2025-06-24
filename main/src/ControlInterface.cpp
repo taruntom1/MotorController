@@ -2,7 +2,7 @@
 #include "esp_log.h"
 #include "TimeSyncServer.h"
 #include <string.h>
-
+#include <format>
 #include <utility>
 
 #define LOG_LOCAL_LEVEL ESP_LOG_DEBUG // Set local log level for this file
@@ -11,7 +11,16 @@ ControlInterface::ControlInterface(const protocol_config &config)
     : protocol(config)
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Initializing control interface");
-    protocol.begin();
+
+    try
+    {
+        protocol.begin();
+    }
+    catch (const UARTException &e)
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to initialize UART protocol: %s", e.what());
+        throw ControlInterfaceException("UART initialization failed: " + std::string(e.what()));
+    }
 
     protocol.onCommandReceived = [this](Command command)
     {
@@ -21,10 +30,84 @@ ControlInterface::ControlInterface(const protocol_config &config)
     cacheVctr.reserve(100);
 }
 
+// Helper method for safe data reading with exception conversion
+template <typename Func>
+std::vector<uint8_t> ControlInterface::safeReadData(size_t size, uint32_t timeout, const std::string &operation, Func &&converter)
+{
+    try
+    {
+        return protocol.ReadData(size, timeout);
+    }
+    catch (const UARTTimeoutException &e)
+    {
+        throw converter("Timeout " + operation + ": " + std::string(e.what()));
+    }
+    catch (const UARTException &e)
+    {
+        throw converter("UART error " + operation + ": " + std::string(e.what()));
+    }
+}
+
+// Helper method for executing operations with automatic failure response
+template <typename Func>
+void ControlInterface::safeExecuteWithFailureResponse(const std::string &operation, Func &&func)
+{
+    try
+    {
+        func();
+        sendProtocolCommand(Command::READ_SUCCESS, "send success confirmation");
+    }
+    catch (const ControlInterfaceException &e)
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "%s failed: %s", operation.c_str(), e.what());
+        try
+        {
+            protocol.SendCommand(Command::READ_FAILURE);
+        }
+        catch (const UARTException &uart_e)
+        {
+            ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to send failure notification: %s", uart_e.what());
+        }
+        throw;
+    }
+}
+
+// Helper method for sending protocol commands with exception handling
+void ControlInterface::sendProtocolCommand(Command cmd, const std::string &operation)
+{
+    try
+    {
+        protocol.SendCommand(cmd);
+    }
+    catch (const UARTException &e)
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Failed to %s: %s", operation.c_str(), e.what());
+        if (cmd != Command::READ_SUCCESS)
+        {
+            throw ControlInterfaceException("Failed to " + operation + ": " + std::string(e.what()));
+        }
+        // Don't throw for READ_SUCCESS failures as main operation succeeded
+    }
+}
+
+// Helper method for sending protocol data with exception handling
+void ControlInterface::sendProtocolData(const std::vector<uint8_t> &data, const std::string &operation)
+{
+    try
+    {
+        protocol.SendData(data);
+    }
+    catch (const UARTException &e)
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to %s: %s", operation.c_str(), e.what());
+        throw ControlInterfaceException("Failed to " + operation + ": " + std::string(e.what()));
+    }
+}
+
 void ControlInterface::Ping()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Ping sent");
-    protocol.SendCommand(Command::PING);
+    sendProtocolCommand(Command::PING, "send ping command");
 }
 
 void ControlInterface::start()
@@ -32,83 +115,75 @@ void ControlInterface::start()
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Starting motor controller");
     assert(ControllerRunCallback && "ControllerRunCallback must be set");
     ControllerRunCallback(true);
-    protocol.SendCommand(Command::READ_SUCCESS);
+    sendProtocolCommand(Command::READ_SUCCESS, "send start confirmation");
 }
+
 void ControlInterface::stop()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Stopping motor controller");
     assert(ControllerRunCallback && "ControllerRunCallback must be set");
     ControllerRunCallback(false);
-    protocol.SendCommand(Command::READ_SUCCESS);
+    sendProtocolCommand(Command::READ_SUCCESS, "send stop confirmation");
 }
 
-bool ControlInterface::GetControllerProperties()
+void ControlInterface::GetControllerProperties()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Reading controller properties");
-    std::vector<uint8_t> data = protocol.ReadData(controller_properties_t::size, 1000);
-    if (data.empty()) [[unlikely]]
-    {
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Controller properties read failed");
-        protocol.SendCommand(Command::READ_FAILURE);
-        return false;
-    }
 
-    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Controller properties read successfully");
-    size_t offset = 0;
-    controller_properties_t properties;
-    properties.from_bytes(data, offset);
+    safeExecuteWithFailureResponse("Reading controller properties", [this]()
+                                   {
+        auto data = safeReadData(controller_properties_t::size, 1000, "reading controller properties", 
+                                [](const std::string& msg) { return DataReadException(msg); });
 
-    wheel_count = properties.numMotors;
-    odo_broadcast_flags.resize(wheel_count);
-    motor_setpoints.resize(wheel_count); // resize setpoints vector here
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Controller properties read successfully");
+        size_t offset = 0;
+        controller_properties_t properties;
+        properties.from_bytes(data, offset);
 
-    assert(ControllerPropertiesCallback && "ControllerPropertiesCallback must be set");
-    ControllerPropertiesCallback(properties);
-    protocol.SendCommand(Command::READ_SUCCESS);
-    return true;
+        wheel_count = properties.numMotors;
+        odo_broadcast_flags.resize(wheel_count);
+        motor_setpoints.resize(wheel_count);
+
+        assert(ControllerPropertiesCallback && "ControllerPropertiesCallback must be set");
+        ControllerPropertiesCallback(properties); });
 }
 
-bool ControlInterface::GetWheelData()
+void ControlInterface::GetWheelData()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Getting motor data...");
-    constexpr size_t dataSize = sizeof(uint8_t) + wheel_data_t::size;
-    size_t offset = 1;
-    std::vector<uint8_t> buffer = protocol.ReadData(dataSize, 1000);
-    if (buffer.empty()) [[unlikely]]
-    {
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Motor data read failed");
-        protocol.SendCommand(Command::READ_FAILURE);
-        return false;
-    }
-    ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Motor ID and Motor Data received");
-    uint8_t wheel_id = buffer[0];
-    if (wheel_id >= wheel_count) [[unlikely]]
-    {
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Motor ID out of range");
-        protocol.SendCommand(Command::READ_FAILURE);
-        return false;
-    }
 
-    wheel_data_t wheelData;
-    wheelData.from_bytes(buffer, offset);
+    safeExecuteWithFailureResponse("Reading motor data", [this]()
+                                   {
+        constexpr size_t dataSize = sizeof(uint8_t) + wheel_data_t::size;
+        auto buffer = safeReadData(dataSize, 1000, "reading motor data",
+                                  [](const std::string& msg) { return DataReadException(msg); });
 
-    odo_broadcast_flags.at(wheel_id) = wheelData.odoBroadcastStatus;
-    refreshBroadcastStatus();
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Motor ID and Motor Data received");
+        uint8_t wheel_id = buffer[0];
+        if (wheel_id >= wheel_count)
+        {
+            throw InvalidMotorIdException(wheel_id, wheel_count);
+        }
 
-    assert(wheelData.motor_id == wheel_id);
-    assert(WheelDataCallback && "WheelDataCallback must be set");
-    WheelDataCallback(wheelData);
+        size_t offset = 1;
+        wheel_data_t wheelData;
+        wheelData.from_bytes(buffer, offset);
 
-    ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Motor data read successful for motor ID %d", wheel_id);
-    protocol.SendCommand(Command::READ_SUCCESS);
-    return true;
+        odo_broadcast_flags.at(wheel_id) = wheelData.odoBroadcastStatus;
+        refreshBroadcastStatus();
+
+        assert(wheelData.motor_id == wheel_id);
+        assert(WheelDataCallback && "WheelDataCallback must be set");
+        WheelDataCallback(wheelData);
+
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Motor data read successful for motor ID %d", wheel_id); });
 }
 
 void ControlInterface::stopAllBroadcast()
 {
     assert(OdoBroadcastCallbackBlocking && "OdoBroadcastCallbackBlocking must be set");
     OdoBroadcastCallbackBlocking(TaskAction::Suspend);
-    protocol.SendCommand(Command::READ_SUCCESS);
+    sendProtocolCommand(Command::READ_SUCCESS, "send stop broadcast confirmation");
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "All broadcasts stopped");
 }
 
@@ -117,8 +192,7 @@ void ControlInterface::restoreAllBroadcast()
     refreshBroadcastStatus();
     assert(OdoBroadcastCallbackBlocking && "OdoBroadcastCallbackBlocking must be set");
     OdoBroadcastCallbackBlocking(TaskAction::Resume);
-    protocol.SendCommand(Command::READ_SUCCESS);
-
+    sendProtocolCommand(Command::READ_SUCCESS, "send restore broadcast confirmation");
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "All broadcasts restored");
 }
 
@@ -142,107 +216,108 @@ void ControlInterface::refreshBroadcastStatus()
     OdoBroadcastCallbackNonBlocking(action);
 }
 
-bool ControlInterface::GetOdoBroadcastStatus()
+void ControlInterface::GetOdoBroadcastStatus()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Reading odo broadcast status");
-    constexpr size_t buffer_size = sizeof(uint8_t) + odo_broadcast_flags_t::size;
-    std::vector<uint8_t> buffer = protocol.ReadData(buffer_size, 1000);
 
-    if (buffer.empty()) [[unlikely]]
-    {
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Odo broadcast status read failed : not enough data");
-        protocol.SendCommand(Command::READ_FAILURE);
-        return false;
-    }
+    safeExecuteWithFailureResponse("Reading odo broadcast status", [this]()
+                                   {
+        constexpr size_t buffer_size = sizeof(uint8_t) + odo_broadcast_flags_t::size;
+        auto buffer = safeReadData(buffer_size, 1000, "reading odo broadcast status",
+                                  [](const std::string& msg) { return DataReadException(msg); });
 
-    const uint8_t motorID = buffer[0];
-    // Ensure odo_broadcast_flags is properly sized
-    if (odo_broadcast_flags.size() <= motorID) [[unlikely]]
-    {
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "odo_broadcast_flags not sized for motorID %d", motorID);
-        protocol.SendCommand(Command::READ_FAILURE);
-        return false;
-    }
-    size_t offset = 1;
-
-    odo_broadcast_flags[motorID].from_bytes(buffer, offset);
-    protocol.SendCommand(Command::READ_SUCCESS);
-
-    refreshBroadcastStatus();
-
-    return true;
+        const uint8_t motorID = buffer[0];
+        if (odo_broadcast_flags.size() <= motorID)
+        {
+            throw InvalidMotorIdException(motorID, wheel_count);
+        }
+        
+        size_t offset = 1;
+        odo_broadcast_flags[motorID].from_bytes(buffer, offset);
+        refreshBroadcastStatus(); });
 }
 
-bool ControlInterface::GetPIDConstants()
+void ControlInterface::GetPIDConstants()
 {
-    constexpr size_t buffer_size = sizeof(uint8_t) * 2 + pid_constants_t::size;
-    std::vector<uint8_t> buffer = protocol.ReadData(buffer_size, 1000);
+    safeExecuteWithFailureResponse("Reading PID constants", [this]()
+                                   {
+        constexpr size_t buffer_size = sizeof(uint8_t) * 2 + pid_constants_t::size;
+        auto buffer = safeReadData(buffer_size, 1000, "reading PID constants",
+                                  [](const std::string& msg) { return DataReadException(msg); });
 
-    if (buffer.empty()) [[unlikely]]
-    {
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "PID constants read failed: buffer empty");
-        protocol.SendCommand(Command::READ_FAILURE);
-        return false;
-    }
+        const uint8_t &motorID = buffer[0];
+        const uint8_t &pidType = buffer[1];
+        
+        if (motorID >= wheel_count)
+        {
+            throw InvalidMotorIdException(motorID, wheel_count);
+        }
+        if (pidType >= 2)
+        {
+            throw InvalidPIDTypeException(pidType);
+        }
 
-    const uint8_t &motorID = buffer[0];
-    const uint8_t &pidType = buffer[1];
-    size_t offset = 2;
-    // Validate motor ID
-    if ((motorID >= wheel_count) || pidType >= 2) [[unlikely]]
-    {
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Invalid motor ID (%d) or PID type (%d)", motorID, pidType);
-        protocol.SendCommand(Command::READ_FAILURE);
-        return false;
-    }
+        size_t offset = 2;
+        pid_constants_t constants;
+        constants.from_bytes(buffer, offset);
 
-    pid_constants_t constants;
-    constants.from_bytes(buffer, offset);
-
-    // Store PID constants
-    assert(PIDConstantsCallback && "PIDConstantsCallback must be set");
-    PIDConstantsCallback(motorID, static_cast<PIDType>(pidType), constants);
-
-    protocol.SendCommand(Command::READ_SUCCESS);
-    return true;
+        assert(PIDConstantsCallback && "PIDConstantsCallback must be set");
+        PIDConstantsCallback(motorID, static_cast<PIDType>(pidType), constants); });
 }
 
-bool ControlInterface::GetWheelControlMode()
+void ControlInterface::GetWheelControlMode()
 {
-    constexpr size_t buffer_size = sizeof(uint8_t) + sizeof(ControlMode);
-    std::vector<uint8_t> buffer(protocol.ReadData(buffer_size, 1000));
-    if (buffer.empty()) [[unlikely]]
-    {
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to read motor ID and control mode");
-        protocol.SendCommand(Command::READ_FAILURE);
-        return false;
-    }
-    const uint8_t &motorID = buffer[0];
-    size_t offset = 1;
-    if (motorID >= wheel_count) [[unlikely]]
-    {
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Invalid motor ID %d", motorID);
-        protocol.SendCommand(Command::READ_FAILURE);
-        return false;
-    }
-    ControlMode control_mode;
-    from_bytes(control_mode, buffer, offset);
-    assert(WheelControlModeCallback && "WheelControlModeCallback must be set");
-    WheelControlModeCallback(motorID, control_mode);
-    protocol.SendCommand(Command::READ_SUCCESS);
-    return true;
+    safeExecuteWithFailureResponse("Reading wheel control mode", [this]()
+                                   {
+        constexpr size_t buffer_size = sizeof(uint8_t) + sizeof(ControlMode);
+        auto buffer = safeReadData(buffer_size, 1000, "reading wheel control mode",
+                                  [](const std::string& msg) { return DataReadException(msg); });
+
+        const uint8_t &motorID = buffer[0];
+        if (motorID >= wheel_count)
+        {
+            throw InvalidMotorIdException(motorID, wheel_count);
+        }
+
+        size_t offset = 1;
+        ControlMode control_mode;
+        from_bytes(control_mode, buffer, offset);
+        
+        assert(WheelControlModeCallback && "WheelControlModeCallback must be set");
+        WheelControlModeCallback(motorID, control_mode); });
 }
 
-bool ControlInterface::GetMotorSetpoints()
+void ControlInterface::GetMotorSetpoints()
 {
-    if (protocol.ReadData(reinterpret_cast<uint8_t *>(motor_setpoints.data()), sizeof(float) * wheel_count)) [[likely]]
+    try
     {
+        bool success = false;
+        try
+        {
+            success = protocol.ReadData(reinterpret_cast<uint8_t *>(motor_setpoints.data()), sizeof(float) * wheel_count);
+        }
+        catch (const UARTTimeoutException &e)
+        {
+            throw DataReadException("Timeout reading motor setpoints: " + std::string(e.what()));
+        }
+        catch (const UARTException &e)
+        {
+            throw DataReadException("UART error reading motor setpoints: " + std::string(e.what()));
+        }
+
+        if (!success)
+        {
+            throw DataReadException("Failed to read motor setpoints");
+        }
+
         assert(WheelSetpointCallback && "WheelSetpointCallback must be set");
         WheelSetpointCallback(motor_setpoints);
-        return true;
     }
-
-    return false;
+    catch (const ControlInterfaceException &e)
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Motor setpoints read failed: %s", e.what());
+        throw;
+    }
 }
 
 void ControlInterface::SendOdoData(const std::pair<timestamp_t, std::vector<odometry_t>> &odo_data)
@@ -275,7 +350,6 @@ void ControlInterface::SendOdoData(const std::pair<timestamp_t, std::vector<odom
     ptr += baseHeaderSize;
     memcpy(ptr, &odo_data.first, timestampSize);
     ptr += timestampSize;
-
     for (const auto &data : odo_data.second)
     {
         if (angleBroadcast)
@@ -294,8 +368,7 @@ void ControlInterface::SendOdoData(const std::pair<timestamp_t, std::vector<odom
             ptr += sizeof(float);
         }
     }
-
-    protocol.SendData(cacheVctr);
+    sendProtocolData(cacheVctr, "send odometry data");
 }
 
 /* bool ControlInterface::SendControllerProperties()
@@ -325,56 +398,62 @@ bool ControlInterface::SendWheelData()
 void ControlInterface::CallFunction(Command commandType)
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Calling function for command type: %d", static_cast<uint8_t>(commandType));
-    switch (commandType)
+
+    try
     {
-        using enum Command;
-    case SYNC_TIME:
-        handleTimeSyncRequest(&protocol);
-        break;
-    case SET_MOTOR_CONTROL_MODES:
-        GetWheelControlMode();
-        break;
-    case SET_WHEEL_SETPOINT:
-        GetMotorSetpoints();
-        break;
-    case PING:
-        Ping();
-        break;
-    case START:
-        start();
-        break;
-    case STOP:
-        stop();
-        break;
-    case SET_CONTROLLER_PROPERTIES:
-        if (GetControllerProperties())
-            ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Controller properties set successfully");
-        else
-            ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to set controller properties");
-        break;
+        switch (commandType)
+        {
+            using enum Command;
+        case SYNC_TIME:
+            handleTimeSyncRequest(&protocol);
+            break;
+        case SET_MOTOR_CONTROL_MODES:
+            GetWheelControlMode();
+            break;
+        case SET_WHEEL_SETPOINT:
+            GetMotorSetpoints();
+            break;
+        case PING:
+            Ping();
+            break;
+        case START:
+            start();
+            break;
+        case STOP:
+            stop();
+            break;
+        case SET_CONTROLLER_PROPERTIES:
+            GetControllerProperties();
+            break;
+        case SET_MOTOR_DATA:
+            GetWheelData();
+            break;
 
-    case SET_MOTOR_DATA:
-        GetWheelData();
-        break;
+        case STOP_ALL_BROADCAST:
+            stopAllBroadcast();
+            break;
 
-    case STOP_ALL_BROADCAST:
-        stopAllBroadcast();
-        break;
+        case RESTORE_ALL_BROADCAST:
+            restoreAllBroadcast();
+            break;
 
-    case RESTORE_ALL_BROADCAST:
-        restoreAllBroadcast();
-        break;
+        case SET_PID_CONSTANTS:
+            GetPIDConstants();
+            break;
 
-    case SET_PID_CONSTANTS:
-        GetPIDConstants();
-        break;
+        case SET_ODO_BROADCAST_STATUS:
+            GetOdoBroadcastStatus();
+            break;
 
-    case SET_ODO_BROADCAST_STATUS:
-        GetOdoBroadcastStatus();
-        break;
-
-    default:
-        ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Unknown command received: %d", static_cast<int>(commandType));
-        break;
+        default:
+            ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Unknown command received: %d", static_cast<int>(commandType));
+            break;
+        }
+    }
+    catch (const ControlInterfaceException &e)
+    {
+        ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Command execution failed for command %d: %s",
+                            static_cast<int>(commandType), e.what());
+        // Exception is already handled by individual methods, just log here
     }
 }
