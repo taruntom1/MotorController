@@ -181,7 +181,7 @@ imu_data_t MPU6050Reader::readData()
 void MPU6050Reader::taskFunc(void *arg)
 {
     auto *self = static_cast<MPU6050Reader *>(arg);
-    const TickType_t delay_ticks = pdMS_TO_TICKS(1000 / self->cfg_.sample_rate_hz);
+    const auto delay_ticks = pdMS_TO_TICKS(1000 / self->cfg_.sample_rate_hz);
 
     mpu6050_acce_value_t acce_val{};
     mpu6050_gyro_value_t gyro_val{};
@@ -201,24 +201,18 @@ void MPU6050Reader::taskFunc(void *arg)
         }
 
         // 3. Write into shared IMUData struct under mutex
-        if (self->data_mutex_)
+        if (self->data_mutex_ && xSemaphoreTake(self->data_mutex_, 0) == pdTRUE)
         {
-            if (xSemaphoreTake(self->data_mutex_, 0) == pdTRUE)
-            {
-                self->data_ptr_->acce_x = acce_val.acce_x;
-                self->data_ptr_->acce_y = acce_val.acce_y;
-                self->data_ptr_->acce_z = acce_val.acce_z;
-                self->data_ptr_->gyro_x = gyro_val.gyro_x;
-                self->data_ptr_->gyro_y = gyro_val.gyro_y;
-                self->data_ptr_->gyro_z = gyro_val.gyro_z;
-                xSemaphoreGive(self->data_mutex_);
-            }
+            self->data_ptr_->acce_x = acce_val.acce_x;
+            self->data_ptr_->acce_y = acce_val.acce_y;
+            self->data_ptr_->acce_z = acce_val.acce_z;
+            self->data_ptr_->gyro_x = gyro_val.gyro_x;
+            self->data_ptr_->gyro_y = gyro_val.gyro_y;
+            self->data_ptr_->gyro_z = gyro_val.gyro_z;
+            xSemaphoreGive(self->data_mutex_);
         }
 
         // 4. Delay until next cycle
         vTaskDelay(delay_ticks);
     }
-
-    // Should never reach here; if loop exits, delete the task
-    vTaskDelete(nullptr);
 }

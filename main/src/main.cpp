@@ -27,15 +27,15 @@ void print_all_tasks_stack_high_watermark()
     UBaseType_t num_tasks = uxTaskGetNumberOfTasks();
 
     // Allocate memory to store task status
-    TaskStatus_t *task_status_array = (TaskStatus_t *)pvPortMalloc(num_tasks * sizeof(TaskStatus_t));
-    if (task_status_array == NULL)
+    auto *task_status_array = (TaskStatus_t *)pvPortMalloc(num_tasks * sizeof(TaskStatus_t));
+    if (task_status_array == nullptr)
     {
         ESP_LOGE("StackMonitor", "Failed to allocate memory for task status");
         return;
     }
 
     // Get system state (snapshot of all tasks)
-    UBaseType_t array_size = uxTaskGetSystemState(task_status_array, num_tasks, NULL);
+    UBaseType_t array_size = uxTaskGetSystemState(task_status_array, num_tasks, nullptr);
 
     // Print high watermark for each task
     ESP_LOGI("StackMonitor", "Task Name        | High Watermark (words)");
@@ -54,15 +54,15 @@ void print_all_tasks_stack_high_watermark()
 
 void cpu_usage_logger_task(void *param)
 {
-    char *buffer = new char[CPU_STATS_BUFFER_SIZE];
+    auto *buffer = new char[CPU_STATS_BUFFER_SIZE];
     if (!buffer)
     {
         ESP_LOGE("CPU_STATS", "Failed to allocate stats buffer");
-        vTaskDelete(NULL);
+        vTaskDelete(nullptr);
         return;
     }
 
-    while (1)
+    while (true)
     {
         vTaskGetRunTimeStats(buffer);
         ESP_LOGI("CPU_STATS", "\nTask\t\tTime\t\t%% CPU\n%s", buffer);
@@ -72,7 +72,7 @@ void cpu_usage_logger_task(void *param)
 
     // Shouldn't reach here, but clean up just in case
     free(buffer);
-    vTaskDelete(NULL);
+    vTaskDelete(nullptr);
 }
 
 // Return time in 0.1 microsecond units (FreeRTOS expects increasing counter)
@@ -113,5 +113,5 @@ extern "C" void app_main()
 
     // static MPU6050Reader imuReader(cfg, &imu_data);
 
-    xTaskCreate(cpu_usage_logger_task, "cpu_logger", CPU_LOGGER_TASK_STACK_SIZE, NULL, CPU_LOGGER_TASK_PRIORITY, NULL);
+    xTaskCreate(cpu_usage_logger_task, "cpu_logger", CPU_LOGGER_TASK_STACK_SIZE, nullptr, CPU_LOGGER_TASK_PRIORITY, nullptr);
 }

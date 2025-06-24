@@ -3,11 +3,11 @@
 #include "TimeSyncServer.h"
 #include <string.h>
 
+#include <utility>
+
 #define LOG_LOCAL_LEVEL ESP_LOG_DEBUG // Set local log level for this file
 
-static const char *TAG = "ControlInterface";
-
-ControlInterface::ControlInterface(protocol_config config)
+ControlInterface::ControlInterface(const protocol_config &config)
     : protocol(config)
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Initializing control interface");
@@ -46,7 +46,7 @@ bool ControlInterface::GetControllerProperties()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Reading controller properties");
     std::vector<uint8_t> data = protocol.ReadData(controller_properties_t::size, 1000);
-    if (unlikely(data.empty()))
+    if (data.empty()) [[unlikely]]
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Controller properties read failed");
         protocol.SendCommand(Command::READ_FAILURE);
@@ -73,18 +73,16 @@ bool ControlInterface::GetWheelData()
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Getting motor data...");
     constexpr size_t dataSize = sizeof(uint8_t) + wheel_data_t::size;
     size_t offset = 1;
-
     std::vector<uint8_t> buffer = protocol.ReadData(dataSize, 1000);
-    if (unlikely(buffer.empty()))
+    if (buffer.empty()) [[unlikely]]
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Motor data read failed");
         protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
-
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Motor ID and Motor Data received");
     uint8_t wheel_id = buffer[0];
-    if (unlikely(wheel_id >= wheel_count))
+    if (wheel_id >= wheel_count) [[unlikely]]
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Motor ID out of range");
         protocol.SendCommand(Command::READ_FAILURE);
@@ -117,7 +115,6 @@ void ControlInterface::stopAllBroadcast()
 void ControlInterface::restoreAllBroadcast()
 {
     refreshBroadcastStatus();
-    // if (odo_broadcast_flag.angle || odo_broadcast_flag.speed || odo_broadcast_flag.pwm_value)
     assert(OdoBroadcastCallbackBlocking && "OdoBroadcastCallbackBlocking must be set");
     OdoBroadcastCallbackBlocking(TaskAction::Resume);
     protocol.SendCommand(Command::READ_SUCCESS);
@@ -148,11 +145,10 @@ void ControlInterface::refreshBroadcastStatus()
 bool ControlInterface::GetOdoBroadcastStatus()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Reading odo broadcast status");
-
     constexpr size_t buffer_size = sizeof(uint8_t) + odo_broadcast_flags_t::size;
     std::vector<uint8_t> buffer = protocol.ReadData(buffer_size, 1000);
 
-    if (unlikely(buffer.empty()))
+    if (buffer.empty()) [[unlikely]]
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Odo broadcast status read failed : not enough data");
         protocol.SendCommand(Command::READ_FAILURE);
@@ -160,9 +156,8 @@ bool ControlInterface::GetOdoBroadcastStatus()
     }
 
     const uint8_t motorID = buffer[0];
-
     // Ensure odo_broadcast_flags is properly sized
-    if (unlikely(odo_broadcast_flags.size() <= motorID))
+    if (odo_broadcast_flags.size() <= motorID) [[unlikely]]
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "odo_broadcast_flags not sized for motorID %d", motorID);
         protocol.SendCommand(Command::READ_FAILURE);
@@ -183,19 +178,18 @@ bool ControlInterface::GetPIDConstants()
     constexpr size_t buffer_size = sizeof(uint8_t) * 2 + pid_constants_t::size;
     std::vector<uint8_t> buffer = protocol.ReadData(buffer_size, 1000);
 
-    if (unlikely(buffer.empty()))
+    if (buffer.empty()) [[unlikely]]
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "PID constants read failed: buffer empty");
         protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
 
-    uint8_t &motorID = buffer[0];
-    uint8_t &pidType = buffer[1];
+    const uint8_t &motorID = buffer[0];
+    const uint8_t &pidType = buffer[1];
     size_t offset = 2;
-
     // Validate motor ID
-    if (unlikely((motorID >= wheel_count) || pidType >= 2))
+    if ((motorID >= wheel_count) || pidType >= 2) [[unlikely]]
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Invalid motor ID (%d) or PID type (%d)", motorID, pidType);
         protocol.SendCommand(Command::READ_FAILURE);
@@ -217,16 +211,15 @@ bool ControlInterface::GetWheelControlMode()
 {
     constexpr size_t buffer_size = sizeof(uint8_t) + sizeof(ControlMode);
     std::vector<uint8_t> buffer(protocol.ReadData(buffer_size, 1000));
-    if (unlikely(buffer.empty()))
+    if (buffer.empty()) [[unlikely]]
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to read motor ID and control mode");
         protocol.SendCommand(Command::READ_FAILURE);
         return false;
     }
-
-    uint8_t &motorID = buffer[0];
+    const uint8_t &motorID = buffer[0];
     size_t offset = 1;
-    if (unlikely(motorID >= wheel_count))
+    if (motorID >= wheel_count) [[unlikely]]
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Invalid motor ID %d", motorID);
         protocol.SendCommand(Command::READ_FAILURE);
@@ -242,7 +235,7 @@ bool ControlInterface::GetWheelControlMode()
 
 bool ControlInterface::GetMotorSetpoints()
 {
-    if (likely(protocol.ReadData(reinterpret_cast<uint8_t *>(motor_setpoints.data()), sizeof(float) * wheel_count)))
+    if (protocol.ReadData(reinterpret_cast<uint8_t *>(motor_setpoints.data()), sizeof(float) * wheel_count)) [[likely]]
     {
         assert(WheelSetpointCallback && "WheelSetpointCallback must be set");
         WheelSetpointCallback(motor_setpoints);
@@ -263,7 +256,7 @@ void ControlInterface::SendOdoData(const std::pair<timestamp_t, std::vector<odom
 
     constexpr uint8_t flag_index = 4;
     constexpr uint8_t header_and_command[] = {0xaa, 0xaa, 0xaa,
-                                              static_cast<uint8_t>(Command::SEND_ODOMETRY)};
+                                              std::to_underlying(Command::SEND_ODOMETRY)};
     constexpr size_t baseHeaderSize = sizeof(header_and_command) + 1;
     constexpr size_t timestampSize = sizeof(timestamp_t);
     const size_t angleBlockSize = angleBroadcast ? (sizeof(angle_t) * wheel_count) : 0;
@@ -334,48 +327,49 @@ void ControlInterface::CallFunction(Command commandType)
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Calling function for command type: %d", static_cast<uint8_t>(commandType));
     switch (commandType)
     {
-    case Command::SYNC_TIME:
+        using enum Command;
+    case SYNC_TIME:
         handleTimeSyncRequest(&protocol);
         break;
-    case Command::SET_MOTOR_CONTROL_MODES:
+    case SET_MOTOR_CONTROL_MODES:
         GetWheelControlMode();
         break;
-    case Command::SET_WHEEL_SETPOINT:
+    case SET_WHEEL_SETPOINT:
         GetMotorSetpoints();
         break;
-    case Command::PING:
+    case PING:
         Ping();
         break;
-    case Command::START:
+    case START:
         start();
         break;
-    case Command::STOP:
+    case STOP:
         stop();
         break;
-    case Command::SET_CONTROLLER_PROPERTIES:
+    case SET_CONTROLLER_PROPERTIES:
         if (GetControllerProperties())
             ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Controller properties set successfully");
         else
             ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to set controller properties");
         break;
 
-    case Command::SET_MOTOR_DATA:
+    case SET_MOTOR_DATA:
         GetWheelData();
         break;
 
-    case Command::STOP_ALL_BROADCAST:
+    case STOP_ALL_BROADCAST:
         stopAllBroadcast();
         break;
 
-    case Command::RESTORE_ALL_BROADCAST:
+    case RESTORE_ALL_BROADCAST:
         restoreAllBroadcast();
         break;
 
-    case Command::SET_PID_CONSTANTS:
+    case SET_PID_CONSTANTS:
         GetPIDConstants();
         break;
 
-    case Command::SET_ODO_BROADCAST_STATUS:
+    case SET_ODO_BROADCAST_STATUS:
         GetOdoBroadcastStatus();
         break;
 

@@ -1,8 +1,10 @@
 #include "UART_Protocol.h"
 
+#include <utility>
+
 #define LOG_LOCAL_LEVEL ESP_LOG_INFO // Set local log level for this file
 
-UARTProtocol::UARTProtocol(protocol_config config)
+UARTProtocol::UARTProtocol(const protocol_config &config)
     : config{config},
       header{config.header},
       maxPacketSize{config.maxPacketSize} {}
@@ -21,22 +23,21 @@ void UARTProtocol::begin()
 
     ESP_ERROR_CHECK(uart_pattern_queue_reset(config.port, 20));
 
-    xTaskCreate(&UARTProtocol::uartTask, "uart_task", 3700, this, 10, NULL);
+    xTaskCreate(&UARTProtocol::uartTask, "uart_task", 3700, this, 10, nullptr);
 
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "UART initialized successfully");
 }
 
 void UARTProtocol::uartTask(void *arg)
 {
-    UARTProtocol *self = static_cast<UARTProtocol *>(arg);
+    auto *self = static_cast<UARTProtocol *>(arg);
     self->processEvents();
 }
 
 void UARTProtocol::processEvents()
 {
     uart_event_t event;
-    uint8_t data[128];
-
+    std::array<uint8_t, 128> data; /**< Buffer for received data. */
     while (xQueueReceive(uart_queue, &event, portMAX_DELAY))
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "UART event received Event type: %d", event.type);
@@ -46,7 +47,7 @@ void UARTProtocol::processEvents()
             int pattern_pos = uart_pattern_pop_pos(config.port);
             if (pattern_pos >= 0)
             {
-                int read_len = uart_read_bytes(config.port, data, pattern_pos + 4, pdMS_TO_TICKS(20));
+                int read_len = uart_read_bytes(config.port, data.data(), pattern_pos + 4, pdMS_TO_TICKS(20));
                 if (read_len >= pattern_pos + 3)
                 {
                     uint8_t cmd = data[pattern_pos + 3];
@@ -66,33 +67,31 @@ void UARTProtocol::processEvents()
         }
     }
 
-    vTaskDelete(NULL);
+    vTaskDelete(nullptr);
 }
 
 void UARTProtocol::SendCommand(Command command)
 {
-    static uint8_t commandArr[4] = {header, header, header, 0x00};
-
-    commandArr[3] = static_cast<uint8_t>(command);
+    commandArr[3] = std::to_underlying(command);
 
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, "Sending command: 0x%02X", static_cast<uint8_t>(command));
 
-    uart_write_bytes(config.port, reinterpret_cast<const char *>(commandArr), 4);
+    uart_write_bytes(config.port, commandArr.data(), 4);
 }
 
-void UARTProtocol::SendData(const std::vector<uint8_t> &data)
+void UARTProtocol::SendData(const std::vector<uint8_t> &data) const
 {
     uart_write_bytes(config.port, data.data(), data.size());
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, "Sent %hhu bytes of data", data.size());
 }
 
-void UARTProtocol::SendData(const uint8_t *data, const uint8_t length)
+void UARTProtocol::SendData(const uint8_t *data, const uint8_t length) const
 {
     uart_write_bytes(config.port, data, length);
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, "Sent %hhu bytes of data", length);
 }
 
-bool UARTProtocol::ReadCommand(Command &command, uint32_t timeout_ms)
+bool UARTProtocol::ReadCommand(Command &command, uint32_t timeout_ms) const
 {
     uint32_t tickCount;
     tickCount = xTaskGetTickCount();
@@ -101,7 +100,7 @@ bool UARTProtocol::ReadCommand(Command &command, uint32_t timeout_ms)
     {
         while (uart_read_bytes(config.port, &command, 1, 0) > 0)
         {
-            if (static_cast<uint8_t>(command) == header)
+            if (std::to_underlying(command) == header)
             {
                 ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, "Header received");
                 if (uart_read_bytes(config.port, &command, 1, pdMS_TO_TICKS(10)) > 0)
@@ -121,18 +120,20 @@ bool UARTProtocol::ReadCommand(Command &command, uint32_t timeout_ms)
     return false;
 }
 
-std::vector<uint8_t> UARTProtocol::ReadData(uint8_t length, uint32_t timeout_ms)
+std::vector<uint8_t> UARTProtocol::ReadData(uint8_t length, uint32_t timeout_ms) const
 {
     std::vector<uint8_t> data(length);
-    if (unlikely(uart_read_bytes(config.port, data.data(), length, pdMS_TO_TICKS(timeout_ms)) != length))
+    if (uart_read_bytes(config.port, data.data(), length, pdMS_TO_TICKS(timeout_ms)) != length) [[unlikely]]
+    {
         data.clear();
+    }
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, "Successfully received %hhu bytes of data", length);
     return data;
 }
 
-bool UARTProtocol::ReadData(uint8_t *data, uint8_t length, uint32_t timeout_ms)
+bool UARTProtocol::ReadData(uint8_t *data, uint8_t length, uint32_t timeout_ms) const
 {
-    if (likely(uart_read_bytes(config.port, data, length, pdMS_TO_TICKS(timeout_ms)) == length))
+    if (uart_read_bytes(config.port, data, length, pdMS_TO_TICKS(timeout_ms)) == length) [[likely]]
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_VERBOSE, TAG, "Successfully received %hhu bytes of data", length);
         return true;

@@ -7,7 +7,6 @@
 #include "esp_cpu.h"
 #include "MyStructs.h"
 
-
 /**
  * @defgroup EncoderPulseReaderModule Encoder Pulse Reader
  * @brief Module for managing encoder pulse counting and velocity calculation.
@@ -64,19 +63,19 @@ class EncoderPulseReader
 {
 private:
     const char *TAG = "EncoderPulseReader";
-    pcnt_config_t *_pcnt_config;               /**< Pointer to the configuration structure for PCNT. */
-    pcnt_unit_handle_t pcnt_unit = NULL;       /**< Handle for the PCNT unit. */
-    pcnt_channel_handle_t pcnt_channel = NULL; /**< Handle for the PCNT channel. */
-    float inverse_cycles_per_sec;              /**< Cycles per microsecond of processor. */
-    int previous_count = 0;                    /**< Previous pulse count for velocity calculation. */
-    uint64_t previous_cpu_cycles = 0;          /**< Previous timestamp for velocity calculation. */
+    pcnt_config_t *_pcnt_config;                  /**< Pointer to the configuration structure for PCNT. */
+    pcnt_unit_handle_t pcnt_unit = nullptr;       /**< Handle for the PCNT unit. */
+    pcnt_channel_handle_t pcnt_channel = nullptr; /**< Handle for the PCNT channel. */
+    float inverse_cycles_per_sec;                 /**< Cycles per microsecond of processor. */
+    int previous_count = 0;                       /**< Previous pulse count for velocity calculation. */
+    uint64_t previous_cpu_cycles = 0;             /**< Previous timestamp for velocity calculation. */
 
 public:
     /**
      * @brief Constructs and initializes an EncoderPulseReader instance.
      * @param _pcnt_config Pointer to the PCNT configuration structure.
      */
-    EncoderPulseReader(pcnt_config_t *_pcnt_config);
+    explicit EncoderPulseReader(pcnt_config_t *_pcnt_config);
 
     /**
      * @brief Destructor to clean up resources.
@@ -94,7 +93,6 @@ public:
      * @return True if stopping is successful, otherwise false.
      */
     bool stop_pulse_counter();
-
 
     /**
      * @brief Clears the pulse count of the counter.

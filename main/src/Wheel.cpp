@@ -26,36 +26,32 @@ Wheel::~Wheel()
     updateControlMode(ControlMode::OFF);
 }
 
-Wheel::Wheel(Wheel &&other) noexcept : rolling_mean(10)
+Wheel::Wheel(Wheel &&other) noexcept
+    : TAG(other.TAG),
+      wheel_id(other.wheel_id),
+      control_mode(other.control_mode),
+      anglePIDConstants(other.anglePIDConstants),
+      speedPIDConstants(other.speedPIDConstants),
+      motorConnections(other.motorConnections),
+      odoBroadcastStatus(other.odoBroadcastStatus),
+      angle_odom(other.angle_odom.load()),
+      angular_velocity_odom(other.angular_velocity_odom.load()),
+      setpoint_atomic(other.setpoint_atomic.load()),
+      radians_per_tick(other.radians_per_tick),
+      control_loop_delay_ms(other.control_loop_delay_ms),
+      pwm_value_atomic(other.pwm_value_atomic.load()),
+      motor_config(other.motor_config),
+      motorDriver(std::move(other.motorDriver)),
+      rolling_mean(10),
+      encoder_config(other.encoder_config),
+      encoder(std::move(other.encoder)),
+      pid(std::move(other.pid)),
+      pid_property_update(other.pid_property_update.load()),
+      setpoint(other.setpoint),
+      angle(other.angle),
+      angular_velocity(other.angular_velocity),
+      pwm(other.pwm)
 {
-    TAG = other.TAG;
-    wheel_id = other.wheel_id;
-    control_mode = other.control_mode;
-    anglePIDConstants = other.anglePIDConstants;
-    speedPIDConstants = other.speedPIDConstants;
-    motorConnections = other.motorConnections;
-    control_loop_delay_ms = other.control_loop_delay_ms;
-    odoBroadcastStatus = other.odoBroadcastStatus;
-    angle_odom.store(other.angle_odom.load());
-    angular_velocity_odom.store(other.angular_velocity_odom.load());
-    setpoint_atomic.store(other.setpoint_atomic.load());
-    radians_per_tick = other.radians_per_tick;
-    pwm_value_atomic.store(other.pwm_value_atomic.load());
-
-    motor_config = other.motor_config;
-    motorDriver = std::move(other.motorDriver);
-
-    encoder_config = other.encoder_config;
-    encoder = std::move(other.encoder);
-
-    pid = std::move(other.pid);
-
-    pid_property_update.store(other.pid_property_update.load());
-
-    setpoint = other.setpoint;
-    angle = other.angle;
-    angular_velocity = other.angular_velocity;
-    pwm = other.pwm;
 }
 
 Wheel &Wheel::operator=(Wheel &&other) noexcept
@@ -68,30 +64,24 @@ Wheel &Wheel::operator=(Wheel &&other) noexcept
         anglePIDConstants = other.anglePIDConstants;
         speedPIDConstants = other.speedPIDConstants;
         motorConnections = other.motorConnections;
-        control_loop_delay_ms = other.control_loop_delay_ms;
         odoBroadcastStatus = other.odoBroadcastStatus;
         angle_odom.store(other.angle_odom.load());
         angular_velocity_odom.store(other.angular_velocity_odom.load());
         setpoint_atomic.store(other.setpoint_atomic.load());
         radians_per_tick = other.radians_per_tick;
+        control_loop_delay_ms = other.control_loop_delay_ms;
         pwm_value_atomic.store(other.pwm_value_atomic.load());
-
         motor_config = other.motor_config;
         motorDriver = std::move(other.motorDriver);
-
+        rolling_mean = std::move(other.rolling_mean);
         encoder_config = other.encoder_config;
         encoder = std::move(other.encoder);
-
         pid = std::move(other.pid);
-
         pid_property_update.store(other.pid_property_update.load());
-
         setpoint = other.setpoint;
         angle = other.angle;
         angular_velocity = other.angular_velocity;
         pwm = other.pwm;
-
-        rolling_mean = std::move(other.rolling_mean);
     }
     return *this;
 }
@@ -117,27 +107,28 @@ odometry_t Wheel::getOdometry()
         refreshOdometry();
     }
 
-    return odometry_t(angle_odom.load(std::memory_order_acquire),
-                      angular_velocity_odom.load(std::memory_order_acquire),
-                      pwm_value_atomic.load(std::memory_order_acquire));
+    return {angle_odom.load(std::memory_order_acquire),
+            angular_velocity_odom.load(std::memory_order_acquire),
+            pwm_value_atomic.load(std::memory_order_acquire)};
 }
 
 void Wheel::updateControlMode(ControlMode mode)
 {
+    using enum ControlMode;
     if (control_mode == mode)
         return;
 
     switch (control_mode)
     {
-    case ControlMode::OFF:
+    case OFF:
         break;
-    case ControlMode::PWM_DIRECT_CONTROL:
+    case PWM_DIRECT_CONTROL:
         deInitPWMDirect();
         break;
-    case ControlMode::POSITION_CONTROL:
+    case POSITION_CONTROL:
         deInitAnglePID();
         break;
-    case ControlMode::SPEED_CONTROL:
+    case SPEED_CONTROL:
         deInitSpeedPID();
         break;
     default:
@@ -148,13 +139,13 @@ void Wheel::updateControlMode(ControlMode mode)
 
     switch (control_mode)
     {
-    case ControlMode::PWM_DIRECT_CONTROL:
+    case PWM_DIRECT_CONTROL:
         initPWMDirect();
         break;
-    case ControlMode::POSITION_CONTROL:
+    case POSITION_CONTROL:
         initAnglePID();
         break;
-    case ControlMode::SPEED_CONTROL:
+    case SPEED_CONTROL:
         initSpeedPID();
         break;
     default:
@@ -172,13 +163,14 @@ void Wheel::updateControlLoop()
 {
     switch (control_mode)
     {
-    case ControlMode::PWM_DIRECT_CONTROL:
+        using enum ControlMode;
+    case PWM_DIRECT_CONTROL:
         updatePWMDirectControl();
         break;
-    case ControlMode::POSITION_CONTROL:
+    case POSITION_CONTROL:
         updateAnglePIDControl();
         break;
-    case ControlMode::SPEED_CONTROL:
+    case SPEED_CONTROL:
         updateSpeedPIDControl();
         break;
     default:
@@ -200,12 +192,12 @@ void Wheel::refreshOdometry()
     angular_velocity_odom.store(angular_velocity, std::memory_order_release);
 }
 
-void Wheel::updateSetpoint(float setpoint)
+void Wheel::updateSetpoint(float new_setpoint)
 {
-    setpoint_atomic.store(setpoint, std::memory_order_release);
+    setpoint_atomic.store(new_setpoint, std::memory_order_release);
 }
 
-void Wheel::updatePIDConstants(PIDType type, pid_constants_t &pid_constants)
+void Wheel::updatePIDConstants(PIDType type, const pid_constants_t &pid_constants)
 {
     switch (type)
     {
@@ -304,7 +296,7 @@ void Wheel::updateAnglePIDControl()
                         wheel_id, pwm, setpoint,
                         angle);
 
-    if (unlikely(pid_property_update.load(std::memory_order_acquire)))
+    if (pid_property_update.load(std::memory_order_acquire)) [[unlikely]]
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Wheel %d updating PID constants", wheel_id);
         pid->SetTunings(anglePIDConstants.p,
@@ -354,7 +346,7 @@ void Wheel::updateSpeedPIDControl()
                         wheel_id, pwm, setpoint,
                         angular_velocity);
 
-    if (unlikely(pid_property_update.load(std::memory_order_acquire)))
+    if (pid_property_update.load(std::memory_order_acquire)) [[unlikely]]
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Wheel %d updating PID constants", wheel_id);
         pid->SetTunings(speedPIDConstants.p,

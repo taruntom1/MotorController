@@ -3,7 +3,7 @@
 
 #define LOG_LOCAL_LEVEL ESP_LOG_INFO // Set local log level for this file
 
-MotorDriver::MotorDriver(MotorDriverConfig &config) : config(config)
+MotorDriver::MotorDriver(const MotorDriverConfig &config) : config(config)
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "MotorDriver created.");
 }
@@ -34,14 +34,14 @@ MotorDriver::~MotorDriver()
 bool MotorDriver::init()
 {
     // Configure the MCPWM timer
-    mcpwm_timer_config_t timerConfig = {
-        .group_id = 0,
-        .clk_src = MCPWM_TIMER_CLK_SRC_DEFAULT,
-        .resolution_hz = config.clockFrequencyHz,
-        .count_mode = MCPWM_TIMER_COUNT_MODE_UP,
-        .period_ticks = config.pwmResolution};
-
-    if (mcpwm_new_timer(&timerConfig, &timer) != ESP_OK)
+    if (mcpwm_timer_config_t timerConfig = {
+            .group_id = 0,
+            .clk_src = MCPWM_TIMER_CLK_SRC_DEFAULT,
+            .resolution_hz = config.clockFrequencyHz,
+            .count_mode = MCPWM_TIMER_COUNT_MODE_UP,
+            .period_ticks = config.pwmResolution,
+            .intr_priority = 0};
+        mcpwm_new_timer(&timerConfig, &timer) != ESP_OK)
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to configure MCPWM timer.");
         return false;
@@ -49,10 +49,9 @@ bool MotorDriver::init()
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "MCPWM timer configured.");
 
     // Configure the MCPWM operator
-    mcpwm_operator_config_t operatorConfig = {
-        .group_id = 0};
 
-    if (mcpwm_new_operator(&operatorConfig, &operator_) != ESP_OK)
+    if (mcpwm_operator_config_t operatorConfig = {.group_id = 0, .intr_priority = 0};
+        mcpwm_new_operator(&operatorConfig, &operator_) != ESP_OK)
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to configure MCPWM operator.");
         return false;
@@ -69,9 +68,9 @@ bool MotorDriver::init()
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "MCPWM timer and operator connected.");
 
     // Configure the comparator
-    mcpwm_comparator_config_t comparatorConfig = {};
 
-    if (mcpwm_new_comparator(operator_, &comparatorConfig, &comparator) != ESP_OK)
+    if (mcpwm_comparator_config_t comparatorConfig = {.intr_priority = 0};
+        mcpwm_new_comparator(operator_, &comparatorConfig, &comparator) != ESP_OK)
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to configure MCPWM comparator.");
         return false;
@@ -80,10 +79,8 @@ bool MotorDriver::init()
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "MCPWM comparator configured.");
 
     // Configure the generator
-    mcpwm_generator_config_t generatorConfig = {
-        .gen_gpio_num = config.pwmPin};
-
-    if (mcpwm_new_generator(operator_, &generatorConfig, &generator) != ESP_OK)
+    if (mcpwm_generator_config_t generatorConfig = { .gen_gpio_num = config.pwmPin };
+        mcpwm_new_generator(operator_, &generatorConfig, &generator) != ESP_OK)
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to configure MCPWM generator.");
         return false;
@@ -147,7 +144,7 @@ void MotorDriver::setSpeed(float speed)
     }
 
     // Set comparator value based on duty cycle
-    uint32_t dutyTicks = static_cast<uint32_t>(speed * config.pwmResolution);
+    auto dutyTicks = static_cast<uint32_t>(speed * config.pwmResolution);
     if (mcpwm_comparator_set_compare_value(comparator, dutyTicks) != ESP_OK)
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_ERROR, TAG, "Failed to set comparator value.");

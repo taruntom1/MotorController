@@ -9,4 +9,4 @@ class UARTProtocol; // Forward declaration to avoid circular dependency
 uint16_t crc16_ccitt(const uint8_t* data, size_t length);
 
 // Handles time synchronization request from UART
-void handleTimeSyncRequest(UARTProtocol* protocol);
+void handleTimeSyncRequest(const UARTProtocol* protocol);

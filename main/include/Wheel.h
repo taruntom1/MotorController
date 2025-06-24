@@ -50,8 +50,8 @@ public:
 
     void updateControlMode(ControlMode mode);
     void updateLoopDelay(TickType_t delay_ticks);
-    void updatePIDConstants(PIDType type, pid_constants_t &pid_constants);
-    void updateSetpoint(float setpoint);
+    void updatePIDConstants(PIDType type, const pid_constants_t &pid_constants);
+    void updateSetpoint(float new_setpoint);
     void updateControlLoop();
 
 private:

@@ -29,14 +29,14 @@ private:
     mcpwm_cmpr_handle_t comparator = nullptr; ///< Handle for MCPWM comparator.
     mcpwm_gen_handle_t generator = nullptr; ///< Handle for MCPWM generator.
 
-    MotorDriverConfig &config; ///< Pointer to motor driver configuration.
+    MotorDriverConfig config; ///< Motor driver configuration (stored by value).
 
     const char *TAG = "MotorDriver"; ///< Tag for logging purposes.
 
 public:
     /// @brief Constructor for MotorDriver.
     /// @param config Pointer to the motor driver configuration.
-    MotorDriver(MotorDriverConfig &config);
+    explicit MotorDriver(const MotorDriverConfig &config);
     
     /// @brief Destructor for MotorDriver.
     ~MotorDriver();

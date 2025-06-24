@@ -10,13 +10,12 @@
 #include "TimeSyncServer.h"
 #include "TaskManager.h"
 
-
 enum class TaskAction;
 
 class ControlInterface
 {
 public:
-    ControlInterface(protocol_config config);
+    explicit ControlInterface(const protocol_config &config);
 
     void SendOdoData(const std::pair<timestamp_t, std::vector<odometry_t>> &odo_data);
 
@@ -55,13 +54,14 @@ public:
     }
 
 private:
+    static constexpr const char *TAG = "ControlInterface";
     UARTProtocol protocol;
 
     uint8_t wheel_count = 0;
     std::vector<odo_broadcast_flags_t> odo_broadcast_flags;
     odo_broadcast_flags_t odo_broadcast_flag;
 
-    std::vector<uint8_t> cacheVctr; // to prevent allocation for each call
+    std::vector<uint8_t> cacheVctr;     // to prevent allocation for each call
     std::vector<float> motor_setpoints; // cache for motor setpoints
 
     void Ping();

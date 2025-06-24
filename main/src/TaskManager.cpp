@@ -2,6 +2,7 @@
 #include "WheelContainer.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include <utility> // for std::to_underlying
 
 TaskManager::TaskManager(TaskManagerConfig config, WheelContainer &wheelContainer)
     : wheel_container_(wheelContainer),
@@ -68,11 +69,12 @@ void TaskManager::wheelManageTaskEntry(void *pvParameters)
 
 void TaskManager::suspendResumeAndProcessHelper(const std::function<void()> &processFunc)
 {
-    controlLoopTaskAction(TaskAction::Suspend);
-    odoBroadcastTaskAction(TaskAction::Suspend);
-    processFunc();
-    controlLoopTaskAction(TaskAction::Resume);
-    odoBroadcastTaskAction(TaskAction::Resume);
+    using enum TaskAction;
+    controlLoopTaskAction(Suspend);
+    odoBroadcastTaskAction(Suspend);
+    processFunc(); 
+    controlLoopTaskAction(Resume);
+    odoBroadcastTaskAction(Resume);
 }
 
 void TaskManager::wheelManageTask()
@@ -82,24 +84,24 @@ void TaskManager::wheelManageTask()
         uint32_t ulNotificationValue;
         xTaskNotifyWait(0, ULONG_MAX, &ulNotificationValue, portMAX_DELAY);
 
-        if (ulNotificationValue & static_cast<uint32_t>(task_manager_notifications::PROCESS_TASK_STATE_QUEUE))
+        if (ulNotificationValue & std::to_underlying(task_manager_notifications::PROCESS_TASK_STATE_QUEUE))
         {
             processTaskStateQueue();
         }
 
-        if (ulNotificationValue & static_cast<uint32_t>(task_manager_notifications::NUM_WHEEL_UPDATE))
+        if (ulNotificationValue & std::to_underlying(task_manager_notifications::NUM_WHEEL_UPDATE))
         {
             suspendResumeAndProcessHelper([this]()
                                           { wheel_container_.processPendingWheelCount(); });
         }
 
-        if (ulNotificationValue & static_cast<uint32_t>(task_manager_notifications::WHEEL_UPDATE))
+        if (ulNotificationValue & std::to_underlying(task_manager_notifications::WHEEL_UPDATE))
         {
             suspendResumeAndProcessHelper([this]()
                                           { wheel_container_.processWheelDataQueue(); });
         }
 
-        if (ulNotificationValue & static_cast<uint32_t>(task_manager_notifications::CONTROL_MODE_UPDATE))
+        if (ulNotificationValue & std::to_underlying(task_manager_notifications::CONTROL_MODE_UPDATE))
         {
             suspendResumeAndProcessHelper([this]()
                                           { wheel_container_.processControlModeQueue(); });
@@ -123,9 +125,9 @@ void TaskManager::controlTask()
         if (!control_loop_run.load(std::memory_order_acquire))
         {
             notifyTaskManager(task_manager_notifications::CONTROL_LOOP_SUSPENDED);
-            vTaskSuspend(NULL);
+            vTaskSuspend(nullptr);
         }
-        }
+    }
 }
 
 void TaskManager::odoBroadcastTaskEntry(void *pvParameters)
@@ -149,7 +151,7 @@ void TaskManager::odoBroadcastTask()
         if (!odo_broadcast_run.load(std::memory_order_acquire))
         {
             notifyTaskManager(task_manager_notifications::ODO_BROADCAST_SUSPENDED);
-            vTaskSuspend(NULL);
+            vTaskSuspend(nullptr);
         }
     }
 }
@@ -271,9 +273,10 @@ bool TaskManager::handleTaskAction(TaskAction action,
         return false;
     }
 
+    using enum TaskAction;
     switch (action)
     {
-    case TaskAction::Start:
+    case Start:
         if (task_handle == nullptr || task_state == TaskState::Deleted)
         {
             bool created = task_creator();
@@ -291,11 +294,10 @@ bool TaskManager::handleTaskAction(TaskAction action,
         ESP_LOGW(TAG, "%s: Already exists in %s state, cannot start", task_name, current_state_str);
         return false;
 
-    case TaskAction::Stop:
+    case Stop:
         if (task_state != TaskState::Deleted)
         {
-            bool suspended = suspend_handler();
-            if (suspended)
+            if (suspend_handler())
             {
                 vTaskDelete(task_handle);
                 task_handle = nullptr;
@@ -311,7 +313,7 @@ bool TaskManager::handleTaskAction(TaskAction action,
         }
         return false;
 
-    case TaskAction::Suspend:
+    case Suspend:
         if (task_state == TaskState::Running)
         {
             bool suspended = suspend_handler();
@@ -329,7 +331,7 @@ bool TaskManager::handleTaskAction(TaskAction action,
         ESP_LOGW(TAG, "%s: Cannot suspend from %s state", task_name, current_state_str);
         return false;
 
-    case TaskAction::Resume:
+    case Resume:
         if (task_state == TaskState::Suspended)
         {
             run_flag.store(true, std::memory_order_release);
@@ -353,19 +355,19 @@ bool TaskManager::suspendAndWaitForTaskSuspend(TaskHandle_t &task_handle,
     if (task_handle == nullptr)
         return true;
 
-    eTaskState state = eTaskGetState(task_handle);
-    if (state == eDeleted || state == eSuspended)
+    if (eTaskState state = eTaskGetState(task_handle);
+        state == eDeleted || state == eSuspended)
     {
         if (state == eDeleted)
             task_handle = nullptr;
         return true;
     }
 
-    const uint32_t expected_notification = static_cast<uint32_t>(notification_type);
+    const auto expected_notification = std::to_underlying(notification_type);
     run_flag.store(false, std::memory_order_release); // Stop the loop
 
     uint32_t notification = 0;
-    const TickType_t timeout_ticks = pdMS_TO_TICKS(TASK_SUSPENSION_TIMEOUT_MS);
+    const auto timeout_ticks = pdMS_TO_TICKS(TASK_SUSPENSION_TIMEOUT_MS);
 
     while (!(notification & expected_notification))
     {
@@ -404,8 +406,8 @@ bool TaskManager::enqueueTaskStateCommand(TaskType task_type, TaskAction action)
     TaskStateCommand command = {task_type, action};
 
     // Use a small timeout instead of immediate return to handle brief queue congestion
-    const TickType_t queue_timeout = pdMS_TO_TICKS(10);
-    if (xQueueSendToBack(task_state_queue_, &command, queue_timeout) != pdPASS)
+    if (const auto queue_timeout = pdMS_TO_TICKS(10);
+        xQueueSendToBack(task_state_queue_, &command, queue_timeout) != pdPASS)
     {
         ESP_LOGW(TAG, "Queue: Failed to enqueue %s %s command (queue full/timeout)",
                  taskTypeToString(task_type), taskActionToString(action));
@@ -427,14 +429,14 @@ void TaskManager::processTaskStateQueue()
     while (processed_count < max_commands_per_iteration &&
            xQueueReceive(task_state_queue_, &command, pdMS_TO_TICKS(50)) == pdPASS)
     {
-        bool success = false;
+        using enum TaskType;
         switch (command.task_type)
         {
-        case TaskType::ControlLoop:
-            success = controlLoopTaskAction(command.action);
+        case ControlLoop:
+            controlLoopTaskAction(command.action);
             break;
-        case TaskType::OdoBroadcast:
-            success = odoBroadcastTaskAction(command.action);
+        case OdoBroadcast:
+            odoBroadcastTaskAction(command.action);
             break;
         default:
             ESP_LOGW(TAG, "ProcessQueue: Unknown task type %d", static_cast<int>(command.task_type));
@@ -453,52 +455,55 @@ void TaskManager::processTaskStateQueue()
 }
 
 // Helper functions for enum to string conversion
-const char *TaskManager::taskActionToString(TaskAction action)
+const char *TaskManager::taskActionToString(TaskAction action) const
 {
+    using enum TaskAction;
     switch (action)
     {
-    case TaskAction::Start:
+    case Start:
         return "Start";
-    case TaskAction::Stop:
+    case Stop:
         return "Stop";
-    case TaskAction::Suspend:
+    case Suspend:
         return "Suspend";
-    case TaskAction::Resume:
+    case Resume:
         return "Resume";
     default:
         return "Unknown";
     }
 }
 
-const char *TaskManager::taskStateToString(TaskState state)
+const char *TaskManager::taskStateToString(TaskState state) const
 {
+    using enum TaskState;
     switch (state)
     {
-    case TaskState::Running:
+    case Running:
         return "Running";
-    case TaskState::Suspended:
+    case Suspended:
         return "Suspended";
-    case TaskState::Deleted:
+    case Deleted:
         return "Deleted";
     default:
         return "Unknown";
     }
 }
 
-const char *TaskManager::taskTypeToString(TaskType type)
+const char *TaskManager::taskTypeToString(TaskType type) const
 {
+    using enum TaskType;
     switch (type)
     {
-    case TaskType::ControlLoop:
+    case ControlLoop:
         return "ControlLoop";
-    case TaskType::OdoBroadcast:
+    case OdoBroadcast:
         return "OdoBroadcast";
     default:
         return "Unknown";
     }
 }
 
-const char *TaskManager::getTaskName(TaskHandle_t &task_handle)
+const char *TaskManager::getTaskName(TaskHandle_t &task_handle) const
 {
     if (task_handle == control_task_handle)
         return "ControlTask";

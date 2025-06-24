@@ -37,22 +37,22 @@ struct imu_data_t
  * @brief C++ class to read MPU6050 data on ESP-IDF using FreeRTOS tasks and a mutex.
  *
  * Usage:
- *   // 1. Fill a Config struct.
+ *   1. Fill a Config struct.
  *   MPU6050Reader::Config cfg{};
  *   cfg.i2c_port = I2C_NUM_0;
  *   cfg.sda_io_num = GPIO_NUM_21;
  *   cfg.scl_io_num = GPIO_NUM_22;
- *   cfg.i2c_clk_speed_hz = 400000; // 400kHz
+ *   cfg.i2c_clk_speed_hz = 400000;  400kHz
  *   cfg.dev_addr = MPU6050_I2C_ADDRESS;
- *   cfg.acce_fs = ACCE_FS_4G;      // ±4g range
- *   cfg.gyro_fs = GYRO_FS_500DPS;  // ±500°/s range
- *   cfg.sample_rate_hz = 50;       // 50 Hz sampling
+ *   cfg.acce_fs = ACCE_FS_4G;       ±4g range
+ *   cfg.gyro_fs = GYRO_FS_500DPS;   ±500°/s range
+ *   cfg.sample_rate_hz = 50;        50 Hz sampling
  *
- *   IMUData imu_data;  // Will hold the latest readings
+ *   IMUData imu_data;   Will hold the latest readings
  *   MPU6050Reader reader(cfg, &imu_data);
- *   reader.run();      // Starts the FreeRTOS task reading at 50 Hz
+ *   reader.run();       Starts the FreeRTOS task reading at 50 Hz
  *
- *   // To read safely from imu_data:
+ *    To read safely from imu_data:
  *   reader.takeDataMutex();
  *   float ax = imu_data.acce_x;
  *   float ay = imu_data.acce_y;
@@ -62,9 +62,9 @@ struct imu_data_t
  *   float gz = imu_data.gyro_z;
  *   reader.giveDataMutex();
  *
- *   // When done:
+ *    When done:
  *   reader.stop();
- *   // (Destructor also stops the task and cleans up)
+ *    (Destructor also stops the task and cleans up)
  */
 class MPU6050Reader
 {
@@ -149,7 +149,7 @@ private:
 
 private:
     Config cfg_;
-    imu_data_t *data_ptr_;              /*!< Shared data struct pointer */
+    imu_data_t *data_ptr_;           /*!< Shared data struct pointer */
     mpu6050_handle_t sensor_handle_; /*!< Underlying C handle for MPU6050 */
     SemaphoreHandle_t data_mutex_;   /*!< Mutex protecting data_ptr_ */
     TaskHandle_t task_handle_;       /*!< Handle for the FreeRTOS reading task */

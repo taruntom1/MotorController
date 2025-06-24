@@ -25,7 +25,7 @@ void ControllerManager::setControllerProperties(const controller_properties_t &c
 void ControllerManager::connectCallbacks()
 {
     // From contorl_interface_ to ControllerManager
-    control_interface_.setControllerPropertiesCallback([this](controller_properties_t &properties)
+    control_interface_.setControllerPropertiesCallback([this](const controller_properties_t &properties)
                                                        { this->setControllerProperties(properties); });
 
     // From wheel_manager_ to control_interface_

@@ -84,8 +84,6 @@ public:
     void notifyWheelCountUpdate() { notifyTaskManager(task_manager_notifications::NUM_WHEEL_UPDATE); }
     void notifyControlModeUpdate() { notifyTaskManager(task_manager_notifications::CONTROL_MODE_UPDATE); }
 
-    // Callbacks
-    std::function<void(const std::pair<timestamp_t, std::vector<odometry_t>> &)> odoBroadcastCallback;
     void setOdoBroadcastCallback(std::function<void(const std::pair<timestamp_t, std::vector<odometry_t>> &)> cb)
     {
         odoBroadcastCallback = std::move(cb);
@@ -128,13 +126,16 @@ private:
 
     // Tasks and related functions
     static void wheelManageTaskEntry(void *pvParameters);
-    void wheelManageTask();
+    [[noreturn]] void wheelManageTask();
 
     static void controlTaskEntry(void *pvParameters);
-    void controlTask();
+    [[noreturn]] void controlTask();
 
     static void odoBroadcastTaskEntry(void *pvParameters);
-    void odoBroadcastTask();
+    [[noreturn]] void odoBroadcastTask();
+
+    // Callbacks
+    std::function<void(const std::pair<timestamp_t, std::vector<odometry_t>> &)> odoBroadcastCallback;
 
     bool createControlTask();
     bool createOdoBroadcastTask(); // Helper method for common task creation logic
@@ -164,15 +165,14 @@ private:
     void notifyTaskManager(task_manager_notifications notification)
     {
         xTaskNotify(wheel_manage_task_handle, static_cast<uint32_t>(notification), eSetBits);
-    }
-    // Helper methods for logging
-    const char *taskActionToString(TaskAction action);
-    const char *taskStateToString(TaskState state);
-    const char *taskTypeToString(TaskType type);
-    const char *getTaskName(TaskHandle_t &task_handle);
+    } // Helper methods for logging
+    const char *taskActionToString(TaskAction action) const;
+    const char *taskStateToString(TaskState state) const;
+    const char *taskTypeToString(TaskType type) const;
+    const char *getTaskName(TaskHandle_t &task_handle) const;
 
     bool enqueueTaskStateCommand(TaskType task_type, TaskAction action);
 
     // Helper for suspending/resuming tasks and processing wheel container actions
-    void suspendResumeAndProcessHelper(const std::function<void()>& processFunc);
+    void suspendResumeAndProcessHelper(const std::function<void()> &processFunc);
 };

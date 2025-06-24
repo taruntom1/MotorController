@@ -48,7 +48,6 @@ encoder_ticks_t EncoderPulseReader::get_ticks()
 {
     int hw_count = 0;
     pcnt_unit_get_count(pcnt_unit, &hw_count);
-    //return software_count + hw_count;
     return hw_count;
 }
 
