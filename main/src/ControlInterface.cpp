@@ -82,7 +82,7 @@ void ControlInterface::sendProtocolCommand(Command cmd, const std::string &opera
     catch (const UARTException &e)
     {
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_WARN, TAG, "Failed to %s: %s", operation.c_str(), e.what());
-        if (cmd != Command::READ_SUCCESS)
+        if (cmd != Command::READ_SUCCESS) [[unlikely]]
         {
             throw ControlInterfaceException("Failed to " + operation + ": " + std::string(e.what()));
         }
@@ -160,7 +160,7 @@ void ControlInterface::GetWheelData()
 
         ESP_LOG_LEVEL_LOCAL(ESP_LOG_DEBUG, TAG, "Motor ID and Motor Data received");
         uint8_t wheel_id = buffer[0];
-        if (wheel_id >= wheel_count)
+        if (wheel_id >= wheel_count) [[unlikely]]
         {
             throw InvalidMotorIdException(wheel_id, wheel_count);
         }
@@ -227,7 +227,7 @@ void ControlInterface::GetOdoBroadcastStatus()
                                   [](const std::string& msg) { return DataReadException(msg); });
 
         const uint8_t motorID = buffer[0];
-        if (odo_broadcast_flags.size() <= motorID)
+        if (odo_broadcast_flags.size() <= motorID) [[unlikely]]
         {
             throw InvalidMotorIdException(motorID, wheel_count);
         }
@@ -248,11 +248,11 @@ void ControlInterface::GetPIDConstants()
         const uint8_t &motorID = buffer[0];
         const uint8_t &pidType = buffer[1];
         
-        if (motorID >= wheel_count)
+        if (motorID >= wheel_count) [[unlikely]]
         {
             throw InvalidMotorIdException(motorID, wheel_count);
         }
-        if (pidType >= 2)
+        if (pidType >= 2) [[unlikely]]
         {
             throw InvalidPIDTypeException(pidType);
         }
@@ -274,7 +274,7 @@ void ControlInterface::GetWheelControlMode()
                                   [](const std::string& msg) { return DataReadException(msg); });
 
         const uint8_t &motorID = buffer[0];
-        if (motorID >= wheel_count)
+        if (motorID >= wheel_count) [[unlikely]]
         {
             throw InvalidMotorIdException(motorID, wheel_count);
         }
@@ -305,7 +305,7 @@ void ControlInterface::GetMotorSetpoints()
             throw DataReadException("UART error reading motor setpoints: " + std::string(e.what()));
         }
 
-        if (!success)
+        if (!success) [[unlikely]]
         {
             throw DataReadException("Failed to read motor setpoints");
         }
@@ -326,7 +326,7 @@ void ControlInterface::SendOdoData(const std::pair<timestamp_t, std::vector<odom
     const bool angleBroadcast = odo_broadcast_flag.angle;
     const bool pwmBroadcast = odo_broadcast_flag.pwm_value;
 
-    if (!speedBroadcast && !angleBroadcast && !pwmBroadcast)
+    if (!speedBroadcast && !angleBroadcast && !pwmBroadcast) [[unlikely]]
         return;
 
     constexpr uint8_t flag_index = 4;
