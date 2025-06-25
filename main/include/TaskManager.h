@@ -110,6 +110,15 @@ private:
     TaskHandle_t control_task_handle = nullptr;
     TaskHandle_t odo_broadcast_task_handle = nullptr;
 
+    // Static memory buffers for tasks
+    StaticTask_t wheel_manage_task_tcb;
+    StaticTask_t control_task_tcb;
+    StaticTask_t odo_broadcast_task_tcb;
+    
+    StackType_t wheel_manage_task_stack[WHEEL_MANAGE_TASK_STACK_SIZE];
+    StackType_t control_task_stack[CONTROL_TASK_STACK_SIZE];
+    StackType_t odo_broadcast_task_stack[ODO_BROADCAST_TASK_STACK_SIZE];
+
     TaskState control_task_state_ = TaskState::Deleted;
     TaskState odo_broadcast_task_state_ = TaskState::Deleted;
 
@@ -145,7 +154,9 @@ private:
                           UBaseType_t priority,
                           TaskHandle_t &taskHandle,
                           TaskState &taskState,
-                          std::atomic<bool> &runFlag);
+                          std::atomic<bool> &runFlag,
+                          StackType_t *stackBuffer,
+                          StaticTask_t *taskBuffer);
 
     bool handleTaskAction(TaskAction action,
                           TaskHandle_t &task_handle,

@@ -19,10 +19,12 @@ TaskManager::TaskManager(TaskManagerConfig config, WheelContainer &wheelContaine
     }
 
     // Create wheel manager task with error checking
-    BaseType_t result = xTaskCreate(wheelManageTaskEntry, "WheelManager",
-                                    WHEEL_MANAGE_TASK_STACK_SIZE, this,
-                                    WHEEL_MANAGE_TASK_PRIORITY, &wheel_manage_task_handle);
-    if (result != pdPASS)
+    wheel_manage_task_handle = xTaskCreateStatic(wheelManageTaskEntry, "WheelManager",
+                                                 WHEEL_MANAGE_TASK_STACK_SIZE, this,
+                                                 WHEEL_MANAGE_TASK_PRIORITY,
+                                                 wheel_manage_task_stack,
+                                                 &wheel_manage_task_tcb);
+    if (wheel_manage_task_handle == nullptr)
     {
         ESP_LOGE(TAG, "Failed to create wheel manager task");
         // Clean up queue if task creation fails
@@ -202,13 +204,15 @@ bool TaskManager::createTaskHelper(TaskFunction_t taskFunction,
                                    UBaseType_t priority,
                                    TaskHandle_t &taskHandle,
                                    TaskState &taskState,
-                                   std::atomic<bool> &runFlag)
+                                   std::atomic<bool> &runFlag,
+                                   StackType_t *stackBuffer,
+                                   StaticTask_t *taskBuffer)
 {
     if (taskHandle == nullptr)
     {
         runFlag.store(true, std::memory_order_release);
-        BaseType_t result = xTaskCreate(taskFunction, taskName, stackSize, this, priority, &taskHandle);
-        if (result == pdPASS)
+        taskHandle = xTaskCreateStatic(taskFunction, taskName, stackSize, this, priority, stackBuffer, taskBuffer);
+        if (taskHandle != nullptr)
         {
             taskState = TaskState::Running;
             return true;
@@ -217,8 +221,8 @@ bool TaskManager::createTaskHelper(TaskFunction_t taskFunction,
         {
             runFlag.store(false, std::memory_order_release);
             taskHandle = nullptr;
-            ESP_LOGE(TAG, "Failed to create %s (stack: %u, priority: %u), error: %d",
-                     taskName, stackSize, priority, result);
+            ESP_LOGE(TAG, "Failed to create %s (stack: %u, priority: %u)",
+                     taskName, stackSize, priority);
             return false;
         }
     }
@@ -230,7 +234,7 @@ bool TaskManager::createControlTask()
     return createTaskHelper(controlTaskEntry, "Control Task",
                             CONTROL_TASK_STACK_SIZE, CONTROL_TASK_PRIORITY,
                             control_task_handle, control_task_state_,
-                            control_loop_run);
+                            control_loop_run, control_task_stack, &control_task_tcb);
 }
 
 bool TaskManager::createOdoBroadcastTask()
@@ -238,7 +242,7 @@ bool TaskManager::createOdoBroadcastTask()
     return createTaskHelper(odoBroadcastTaskEntry, "Odo Broadcast Task",
                             ODO_BROADCAST_TASK_STACK_SIZE, ODO_BROADCAST_TASK_PRIORITY,
                             odo_broadcast_task_handle, odo_broadcast_task_state_,
-                            odo_broadcast_run);
+                            odo_broadcast_run, odo_broadcast_task_stack, &odo_broadcast_task_tcb);
 }
 
 bool TaskManager::controlLoopTaskAction(TaskAction action)
