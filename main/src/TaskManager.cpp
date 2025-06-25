@@ -18,6 +18,22 @@ TaskManager::TaskManager(TaskManagerConfig config, WheelContainer &wheelContaine
         return;
     }
 
+    // Create mutexes for task suspension control
+    control_loop_mutex = xSemaphoreCreateMutexStatic(&control_loop_mutex_buffer);
+    odo_broadcast_mutex = xSemaphoreCreateMutexStatic(&odo_broadcast_mutex_buffer);
+
+    if (control_loop_mutex == nullptr || odo_broadcast_mutex == nullptr)
+    {
+        ESP_LOGE(TAG, "Failed to create task suspension mutexes");
+        // Clean up queue if mutex creation fails
+        if (task_state_queue_ != nullptr)
+        {
+            vQueueDelete(task_state_queue_);
+            task_state_queue_ = nullptr;
+        }
+        return;
+    }
+
     // Create wheel manager task with error checking
     wheel_manage_task_handle = xTaskCreateStatic(wheelManageTaskEntry, "WheelManager",
                                                  WHEEL_MANAGE_TASK_STACK_SIZE, this,
@@ -62,6 +78,19 @@ TaskManager::~TaskManager()
         vQueueDelete(task_state_queue_);
         task_state_queue_ = nullptr;
     }
+
+    // Clean up mutexes
+    if (control_loop_mutex != nullptr)
+    {
+        vSemaphoreDelete(control_loop_mutex);
+        control_loop_mutex = nullptr;
+    }
+
+    if (odo_broadcast_mutex != nullptr)
+    {
+        vSemaphoreDelete(odo_broadcast_mutex);
+        odo_broadcast_mutex = nullptr;
+    }
 }
 
 void TaskManager::wheelManageTaskEntry(void *pvParameters)
@@ -69,14 +98,29 @@ void TaskManager::wheelManageTaskEntry(void *pvParameters)
     static_cast<TaskManager *>(pvParameters)->wheelManageTask();
 }
 
-void TaskManager::suspendResumeAndProcessHelper(const std::function<void()> &processFunc)
+void TaskManager::mutexProtectedProcessHelper(const std::function<void()> &processFunc)
 {
-    using enum TaskAction;
-    controlLoopTaskAction(Suspend);
-    odoBroadcastTaskAction(Suspend);
-    processFunc(); 
-    controlLoopTaskAction(Resume);
-    odoBroadcastTaskAction(Resume);
+    // Acquire both mutexes to ensure thread safety with running tasks
+    if (xSemaphoreTake(control_loop_mutex, portMAX_DELAY) == pdTRUE)
+    {
+        if (xSemaphoreTake(odo_broadcast_mutex, portMAX_DELAY) == pdTRUE)
+        {
+            // Execute the processing function while holding both mutexes
+            processFunc();
+
+            // Release mutexes in reverse order
+            xSemaphoreGive(odo_broadcast_mutex);
+        }
+        else
+        {
+            ESP_LOGE(TAG, "Failed to acquire odo broadcast mutex for wheel processing");
+        }
+        xSemaphoreGive(control_loop_mutex);
+    }
+    else
+    {
+        ESP_LOGE(TAG, "Failed to acquire control loop mutex for wheel processing");
+    }
 }
 
 void TaskManager::wheelManageTask()
@@ -93,20 +137,20 @@ void TaskManager::wheelManageTask()
 
         if (ulNotificationValue & std::to_underlying(task_manager_notifications::NUM_WHEEL_UPDATE))
         {
-            suspendResumeAndProcessHelper([this]()
-                                          { wheel_container_.processPendingWheelCount(); });
+            mutexProtectedProcessHelper([this]()
+                                        { wheel_container_.processPendingWheelCount(); });
         }
 
         if (ulNotificationValue & std::to_underlying(task_manager_notifications::WHEEL_UPDATE))
         {
-            suspendResumeAndProcessHelper([this]()
-                                          { wheel_container_.processWheelDataQueue(); });
+            mutexProtectedProcessHelper([this]()
+                                        { wheel_container_.processWheelDataQueue(); });
         }
 
         if (ulNotificationValue & std::to_underlying(task_manager_notifications::CONTROL_MODE_UPDATE))
         {
-            suspendResumeAndProcessHelper([this]()
-                                          { wheel_container_.processControlModeQueue(); });
+            mutexProtectedProcessHelper([this]()
+                                        { wheel_container_.processControlModeQueue(); });
         }
     }
 }
@@ -119,15 +163,23 @@ void TaskManager::controlTaskEntry(void *pvParameters)
 void TaskManager::controlTask()
 {
     TickType_t last_wake_time = xTaskGetTickCount();
+
     while (true)
     {
-        wheel_container_.executeControlLoop();
-        vTaskDelayUntil(&last_wake_time, control_task_delay_ticks.load(std::memory_order_acquire));
-
-        if (!control_loop_run.load(std::memory_order_acquire))
+        // Acquire mutex at the beginning of the loop iteration
+        if (xSemaphoreTake(control_loop_mutex, portMAX_DELAY) == pdTRUE)
         {
-            notifyTaskManager(task_manager_notifications::CONTROL_LOOP_SUSPENDED);
-            vTaskSuspend(nullptr);
+            wheel_container_.executeControlLoop();
+
+            // Release mutex after execution
+            xSemaphoreGive(control_loop_mutex);
+
+            vTaskDelayUntil(&last_wake_time, control_task_delay_ticks.load(std::memory_order_acquire));
+        }
+        else
+        {
+            ESP_LOGE(TAG, "Failed to acquire control loop mutex");
+            vTaskDelay(pdMS_TO_TICKS(10)); // Small delay before retry
         }
     }
 }
@@ -144,16 +196,24 @@ void TaskManager::odoBroadcastTask()
 
     while (true)
     {
-        odoBroadcastData.first = esp_timer_get_time();
-        odoBroadcastData.second = wheel_container_.collectOdometry();
-
-        assert(odoBroadcastCallback && "odoBroadcastCallback must be set before calling");
-        odoBroadcastCallback(odoBroadcastData);
-        vTaskDelayUntil(&last_wake_time, odo_broadcast_task_delay_ticks.load(std::memory_order_acquire));
-        if (!odo_broadcast_run.load(std::memory_order_acquire))
+        // Acquire mutex at the beginning of the loop iteration
+        if (xSemaphoreTake(odo_broadcast_mutex, portMAX_DELAY) == pdTRUE)
         {
-            notifyTaskManager(task_manager_notifications::ODO_BROADCAST_SUSPENDED);
-            vTaskSuspend(nullptr);
+            odoBroadcastData.first = esp_timer_get_time();
+            odoBroadcastData.second = wheel_container_.collectOdometry();
+
+            assert(odoBroadcastCallback && "odoBroadcastCallback must be set before calling");
+            odoBroadcastCallback(odoBroadcastData);
+
+            // Release mutex after execution
+            xSemaphoreGive(odo_broadcast_mutex);
+
+            vTaskDelayUntil(&last_wake_time, odo_broadcast_task_delay_ticks.load(std::memory_order_acquire));
+        }
+        else
+        {
+            ESP_LOGE(TAG, "Failed to acquire odo broadcast mutex");
+            vTaskDelay(pdMS_TO_TICKS(10)); // Small delay before retry
         }
     }
 }
@@ -204,13 +264,11 @@ bool TaskManager::createTaskHelper(TaskFunction_t taskFunction,
                                    UBaseType_t priority,
                                    TaskHandle_t &taskHandle,
                                    TaskState &taskState,
-                                   std::atomic<bool> &runFlag,
                                    StackType_t *stackBuffer,
                                    StaticTask_t *taskBuffer)
 {
     if (taskHandle == nullptr)
     {
-        runFlag.store(true, std::memory_order_release);
         taskHandle = xTaskCreateStatic(taskFunction, taskName, stackSize, this, priority, stackBuffer, taskBuffer);
         if (taskHandle != nullptr)
         {
@@ -219,7 +277,6 @@ bool TaskManager::createTaskHelper(TaskFunction_t taskFunction,
         }
         else
         {
-            runFlag.store(false, std::memory_order_release);
             taskHandle = nullptr;
             ESP_LOGE(TAG, "Failed to create %s (stack: %u, priority: %u)",
                      taskName, stackSize, priority);
@@ -234,7 +291,7 @@ bool TaskManager::createControlTask()
     return createTaskHelper(controlTaskEntry, "Control Task",
                             CONTROL_TASK_STACK_SIZE, CONTROL_TASK_PRIORITY,
                             control_task_handle, control_task_state_,
-                            control_loop_run, control_task_stack, &control_task_tcb);
+                            control_task_stack, &control_task_tcb);
 }
 
 bool TaskManager::createOdoBroadcastTask()
@@ -242,20 +299,20 @@ bool TaskManager::createOdoBroadcastTask()
     return createTaskHelper(odoBroadcastTaskEntry, "Odo Broadcast Task",
                             ODO_BROADCAST_TASK_STACK_SIZE, ODO_BROADCAST_TASK_PRIORITY,
                             odo_broadcast_task_handle, odo_broadcast_task_state_,
-                            odo_broadcast_run, odo_broadcast_task_stack, &odo_broadcast_task_tcb);
+                            odo_broadcast_task_stack, &odo_broadcast_task_tcb);
 }
 
 bool TaskManager::controlLoopTaskAction(TaskAction action)
 {
     return handleTaskAction(action, control_task_handle, control_task_state_, [this]()
-                            { return createControlTask(); }, control_loop_run, [this]()
+                            { return createControlTask(); }, [this]()
                             { return suspendAndWaitForControlLoopSuspend(); });
 }
 
 bool TaskManager::odoBroadcastTaskAction(TaskAction action)
 {
     return handleTaskAction(action, odo_broadcast_task_handle, odo_broadcast_task_state_, [this]()
-                            { return createOdoBroadcastTask(); }, odo_broadcast_run, [this]()
+                            { return createOdoBroadcastTask(); }, [this]()
                             { return suspendAndWaitForOdoBroadcastSuspend(); });
 }
 
@@ -263,7 +320,6 @@ bool TaskManager::handleTaskAction(TaskAction action,
                                    TaskHandle_t &task_handle,
                                    TaskState &task_state,
                                    std::function<bool()> task_creator,
-                                   std::atomic<bool> &run_flag,
                                    std::function<bool()> suspend_handler)
 {
     const char *task_name = getTaskName(task_handle);
@@ -338,7 +394,6 @@ bool TaskManager::handleTaskAction(TaskAction action,
     case Resume:
         if (task_state == TaskState::Suspended)
         {
-            run_flag.store(true, std::memory_order_release);
             vTaskResume(task_handle);
             task_state = TaskState::Running;
             ESP_LOGI(TAG, "%s: Resumed successfully (Suspended -> Running)", task_name);
@@ -351,52 +406,49 @@ bool TaskManager::handleTaskAction(TaskAction action,
     return false;
 }
 
-bool TaskManager::suspendAndWaitForTaskSuspend(TaskHandle_t &task_handle,
-                                               task_manager_notifications notification_type,
-                                               std::atomic<bool> &run_flag,
+bool TaskManager::suspendAndWaitForTaskSuspend(SemaphoreHandle_t mutex,
+                                               TaskHandle_t task_handle,
                                                const char *timeout_log_tag)
 {
-    if (task_handle == nullptr)
-        return true;
-
-    if (eTaskState state = eTaskGetState(task_handle);
-        state == eDeleted || state == eSuspended)
+    if (mutex == nullptr || task_handle == nullptr)
     {
-        if (state == eDeleted)
-            task_handle = nullptr;
-        return true;
+        ESP_LOGE(TAG, "Mutex or task handle is null for %s", timeout_log_tag);
+        return false;
     }
 
-    const auto expected_notification = std::to_underlying(notification_type);
-    run_flag.store(false, std::memory_order_release); // Stop the loop
-
-    uint32_t notification = 0;
+    // Try to acquire the mutex with timeout - this ensures the task is not in critical section
     const auto timeout_ticks = pdMS_TO_TICKS(TASK_SUSPENSION_TIMEOUT_MS);
 
-    while (!(notification & expected_notification))
+    if (xSemaphoreTake(mutex, timeout_ticks) == pdTRUE)
     {
-        if (xTaskNotifyWait(0, expected_notification, &notification, timeout_ticks) == pdFAIL)
-        {
-            ESP_LOGE(TAG, "Timeout waiting for %s suspension", timeout_log_tag);
-            return false; // Timeout or failure
-        }
-    }
+        // Task is not in critical section, safe to suspend
+        vTaskSuspend(task_handle);
 
-    return true;
+        // Release the mutex so task can resume when needed
+        xSemaphoreGive(mutex);
+
+        ESP_LOGI(TAG, "%s: Task suspended successfully", timeout_log_tag);
+        return true;
+    }
+    else
+    {
+        ESP_LOGE(TAG, "Timeout waiting for %s to exit critical section", timeout_log_tag);
+        return false;
+    }
 }
 
 bool TaskManager::suspendAndWaitForControlLoopSuspend()
 {
-    return suspendAndWaitForTaskSuspend(control_task_handle,
-                                        task_manager_notifications::CONTROL_LOOP_SUSPENDED,
-                                        control_loop_run, "control loop");
+    return suspendAndWaitForTaskSuspend(control_loop_mutex,
+                                        control_task_handle,
+                                        "control loop");
 }
 
 bool TaskManager::suspendAndWaitForOdoBroadcastSuspend()
 {
-    return suspendAndWaitForTaskSuspend(odo_broadcast_task_handle,
-                                        task_manager_notifications::ODO_BROADCAST_SUSPENDED,
-                                        odo_broadcast_run, "odometry broadcast");
+    return suspendAndWaitForTaskSuspend(odo_broadcast_mutex,
+                                        odo_broadcast_task_handle,
+                                        "odometry broadcast");
 }
 
 bool TaskManager::enqueueTaskStateCommand(TaskType task_type, TaskAction action)

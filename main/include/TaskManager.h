@@ -7,6 +7,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
+#include "freertos/semphr.h"
 
 // Forward declaration
 class WheelContainer;
@@ -53,10 +54,6 @@ enum class task_manager_notifications : uint32_t
 
     // Task state queue processing
     PROCESS_TASK_STATE_QUEUE = (1 << 3),
-
-    // Task suspension confirmations (still needed for internal communication)
-    CONTROL_LOOP_SUSPENDED = (1 << 4),
-    ODO_BROADCAST_SUSPENDED = (1 << 5),
 };
 
 /**
@@ -129,9 +126,11 @@ private:
     // Odometry broadcast mem cache
     std::pair<timestamp_t, std::vector<odometry_t>> odoBroadcastData;
 
-    // State flags
-    std::atomic<bool> control_loop_run{false};
-    std::atomic<bool> odo_broadcast_run{false};
+    // Task suspension control (mutex-based)
+    SemaphoreHandle_t control_loop_mutex;
+    SemaphoreHandle_t odo_broadcast_mutex;
+    StaticSemaphore_t control_loop_mutex_buffer;
+    StaticSemaphore_t odo_broadcast_mutex_buffer;
 
     // Tasks and related functions
     static void wheelManageTaskEntry(void *pvParameters);
@@ -154,7 +153,6 @@ private:
                           UBaseType_t priority,
                           TaskHandle_t &taskHandle,
                           TaskState &taskState,
-                          std::atomic<bool> &runFlag,
                           StackType_t *stackBuffer,
                           StaticTask_t *taskBuffer);
 
@@ -162,15 +160,13 @@ private:
                           TaskHandle_t &task_handle,
                           TaskState &task_state,
                           std::function<bool()> task_creator,
-                          std::atomic<bool> &run_flag,
                           std::function<bool()> suspend_handler);
     void processTaskStateQueue();
 
     bool suspendAndWaitForControlLoopSuspend();
     bool suspendAndWaitForOdoBroadcastSuspend();
-    bool suspendAndWaitForTaskSuspend(TaskHandle_t &task_handle,
-                                      task_manager_notifications notification_type,
-                                      std::atomic<bool> &run_flag,
+    bool suspendAndWaitForTaskSuspend(SemaphoreHandle_t mutex, 
+                                      TaskHandle_t task_handle,
                                       const char *timeout_log_tag);
 
     void notifyTaskManager(task_manager_notifications notification)
@@ -184,6 +180,6 @@ private:
 
     bool enqueueTaskStateCommand(TaskType task_type, TaskAction action);
 
-    // Helper for suspending/resuming tasks and processing wheel container actions
-    void suspendResumeAndProcessHelper(const std::function<void()> &processFunc);
+    // Helper for mutex-protected processing without full task suspension
+    void mutexProtectedProcessHelper(const std::function<void()> &processFunc);
 };
