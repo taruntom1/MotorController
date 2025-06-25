@@ -2,8 +2,10 @@
 
 #include <atomic>
 #include <functional>
+#include <memory>
 
 #include "MyStructs.h"
+#include "Task.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -24,13 +26,6 @@ enum class TaskAction
     Stop,
     Suspend,
     Resume
-};
-
-enum class TaskState
-{
-    Running,
-    Suspended,
-    Deleted
 };
 
 enum class TaskType
@@ -102,22 +97,19 @@ private:
     // Task state queue
     QueueHandle_t task_state_queue_;
 
-    // Task handles
-    TaskHandle_t wheel_manage_task_handle = nullptr;
-    TaskHandle_t control_task_handle = nullptr;
-    TaskHandle_t odo_broadcast_task_handle = nullptr;
+    // Task wrapper objects
+    std::unique_ptr<Task> wheel_manage_task_;
+    std::unique_ptr<Task> control_task_;
+    std::unique_ptr<Task> odo_broadcast_task_;
 
     // Static memory buffers for tasks
     StaticTask_t wheel_manage_task_tcb;
     StaticTask_t control_task_tcb;
     StaticTask_t odo_broadcast_task_tcb;
-    
+
     StackType_t wheel_manage_task_stack[WHEEL_MANAGE_TASK_STACK_SIZE];
     StackType_t control_task_stack[CONTROL_TASK_STACK_SIZE];
     StackType_t odo_broadcast_task_stack[ODO_BROADCAST_TASK_STACK_SIZE];
-
-    TaskState control_task_state_ = TaskState::Deleted;
-    TaskState odo_broadcast_task_state_ = TaskState::Deleted;
 
     // Task loop delays
     std::atomic<TickType_t> control_task_delay_ticks;
@@ -133,50 +125,28 @@ private:
     StaticSemaphore_t odo_broadcast_mutex_buffer;
 
     // Tasks and related functions
-    static void wheelManageTaskEntry(void *pvParameters);
-    [[noreturn]] void wheelManageTask();
-
-    static void controlTaskEntry(void *pvParameters);
-    [[noreturn]] void controlTask();
-
-    static void odoBroadcastTaskEntry(void *pvParameters);
-    [[noreturn]] void odoBroadcastTask();
+    void wheelManageTask();
+    void controlTask();
+    void odoBroadcastTask();
 
     // Callbacks
     std::function<void(const std::pair<timestamp_t, std::vector<odometry_t>> &)> odoBroadcastCallback;
 
     bool createControlTask();
-    bool createOdoBroadcastTask(); // Helper method for common task creation logic
-    bool createTaskHelper(TaskFunction_t taskFunction,
-                          const char *taskName,
-                          UBaseType_t stackSize,
-                          UBaseType_t priority,
-                          TaskHandle_t &taskHandle,
-                          TaskState &taskState,
-                          StackType_t *stackBuffer,
-                          StaticTask_t *taskBuffer);
+    bool createOdoBroadcastTask();
 
     bool handleTaskAction(TaskAction action,
-                          TaskHandle_t &task_handle,
-                          TaskState &task_state,
-                          std::function<bool()> task_creator,
-                          std::function<bool()> suspend_handler);
+                          std::unique_ptr<Task> &task_wrapper,
+                          std::function<std::unique_ptr<Task>()> task_creator);
     void processTaskStateQueue();
-
-    bool suspendAndWaitForControlLoopSuspend();
-    bool suspendAndWaitForOdoBroadcastSuspend();
-    bool suspendAndWaitForTaskSuspend(SemaphoreHandle_t mutex, 
-                                      TaskHandle_t task_handle,
-                                      const char *timeout_log_tag);
 
     void notifyTaskManager(task_manager_notifications notification)
     {
-        xTaskNotify(wheel_manage_task_handle, static_cast<uint32_t>(notification), eSetBits);
-    } // Helper methods for logging
-    const char *taskActionToString(TaskAction action) const;
-    const char *taskStateToString(TaskState state) const;
-    const char *taskTypeToString(TaskType type) const;
-    const char *getTaskName(TaskHandle_t &task_handle) const;
+        if (wheel_manage_task_ && wheel_manage_task_->getHandle())
+        {
+            xTaskNotify(wheel_manage_task_->getHandle(), static_cast<uint32_t>(notification), eSetBits);
+        }
+    }
 
     bool enqueueTaskStateCommand(TaskType task_type, TaskAction action);
 
