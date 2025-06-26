@@ -13,7 +13,7 @@
 #include <vector>
 #include <stdexcept>
 #include <string>
-#include "Commands.h"
+#include "communication/Commands.h"
 
 /**
  * @brief Base exception class for UART protocol errors

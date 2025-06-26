@@ -1,6 +1,6 @@
-#include "WheelManager.h"
-#include "WheelContainer.h"
-#include "TaskManager.h"
+#include "control/WheelManager.h"
+#include "control/WheelContainer.h"
+#include "core/TaskManager.h"
 
 WheelManager::WheelManager(WheelManagerConfig config)
     : wheel_container_(),

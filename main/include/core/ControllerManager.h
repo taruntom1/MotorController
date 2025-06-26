@@ -1,8 +1,8 @@
 #pragma once
 
-#include "WheelManager.h"
-#include "ControlInterface.h"
-#include "MyStructs.h"
+#include "control/WheelManager.h"
+#include "communication/CommunicationInterface.h"
+#include "utils/MyStructs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 

@@ -3,9 +3,9 @@
 #include <memory>
 #include <functional>
 
-#include "MyStructs.h"
-#include "WheelContainer.h"
-#include "TaskManager.h"
+#include "utils/MyStructs.h"
+#include "control/WheelContainer.h"
+#include "core/TaskManager.h"
 
 // Forward declarations
 

@@ -5,7 +5,7 @@
 #include "esp_log.h"
 #include "esp_err.h"
 #include "esp_cpu.h"
-#include "MyStructs.h"
+#include "utils/MyStructs.h"
 
 /**
  * @defgroup EncoderPulseReaderModule Encoder Pulse Reader

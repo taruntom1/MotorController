@@ -1,9 +1,17 @@
-#include "TaskManager.h"
-#include "WheelContainer.h"
-#include "Task.h"
+#include "core/TaskManager.h"
+#include "control/WheelContainer.h"
+#include "core/Task.h"
 #include "esp_log.h"
 #include "esp_timer.h"
 #include <utility> // for std::to_underlying
+
+/*
+ * TaskManager implementation with simplified design:
+ * - Consolidated frequency update logic with template helper
+ * - Simplified task action handling without complex lambda creators
+ * - Streamlined queue processing without artificial limits
+ * - Template-based task creation to reduce code duplication
+ */
 
 TaskManager::TaskManager(TaskManagerConfig config, WheelContainer &wheelContainer)
     : wheel_container_(wheelContainer),
@@ -199,33 +207,35 @@ void TaskManager::odoBroadcastTask()
     }
 }
 
-void TaskManager::updateOdoBroadcastFrequency(frequency_t frequency)
+void TaskManager::updateTaskFrequency(frequency_t frequency, 
+                                     std::atomic<TickType_t>& delay_ticks, 
+                                     const char* task_name,
+                                     std::function<void(frequency_t)> additional_action)
 {
     if (frequency > 0)
     {
-        odo_broadcast_task_delay_ticks.store(pdMS_TO_TICKS(xPortGetTickRateHz() / frequency),
-                                             std::memory_order_release);
-        ESP_LOGI(TAG, "Odo broadcast frequency updated to %d Hz", frequency);
+        delay_ticks.store(pdMS_TO_TICKS(xPortGetTickRateHz() / frequency), std::memory_order_release);
+        if (additional_action)
+        {
+            additional_action(frequency);
+        }
+        ESP_LOGI(TAG, "%s frequency updated to %d Hz", task_name, frequency);
     }
     else
     {
-        ESP_LOGW(TAG, "Invalid odo broadcast frequency: %d Hz", frequency);
+        ESP_LOGW(TAG, "Invalid %s frequency: %d Hz", task_name, frequency);
     }
+}
+
+void TaskManager::updateOdoBroadcastFrequency(frequency_t frequency)
+{
+    updateTaskFrequency(frequency, odo_broadcast_task_delay_ticks, "Odo broadcast", nullptr);
 }
 
 void TaskManager::updateControlLoopFrequency(frequency_t frequency)
 {
-    if (frequency > 0)
-    {
-        control_task_delay_ticks.store(pdMS_TO_TICKS(xPortGetTickRateHz() / frequency),
-                                       std::memory_order_release);
-        wheel_container_.updateControlLoopFrequency(frequency);
-        ESP_LOGI(TAG, "Control loop frequency updated to %d Hz", frequency);
-    }
-    else
-    {
-        ESP_LOGW(TAG, "Invalid control loop frequency: %d Hz", frequency);
-    }
+    updateTaskFrequency(frequency, control_task_delay_ticks, "Control loop", 
+                       [this](frequency_t freq) { wheel_container_.updateControlLoopFrequency(freq); });
 }
 
 void TaskManager::controlLoopTaskActionNonBlocking(TaskAction action)
@@ -238,106 +248,113 @@ void TaskManager::odoBroadcastTaskActionNonBlocking(TaskAction action)
     enqueueTaskStateCommand(TaskType::OdoBroadcast, action);
 }
 
-bool TaskManager::createControlTask()
+template<typename TaskFunc>
+bool TaskManager::createTask(std::unique_ptr<Task>& task_ptr, 
+                           const char* name,
+                           UBaseType_t stack_size,
+                           UBaseType_t priority,
+                           TaskFunc&& task_function,
+                           StackType_t* stack_buffer,
+                           StaticTask_t* tcb_buffer,
+                           SemaphoreHandle_t suspension_mutex)
 {
-    if (control_task_ != nullptr)
+    if (task_ptr != nullptr)
     {
-        ESP_LOGW(TAG, "Control task already exists");
+        ESP_LOGW(TAG, "%s task already exists", name);
         return false;
     }
 
     Task::Config config{
-        .name = "ControlTask",
-        .stack_size = CONTROL_TASK_STACK_SIZE,
-        .priority = CONTROL_TASK_PRIORITY,
+        .name = name,
+        .stack_size = stack_size,
+        .priority = priority,
         .core_id = tskNO_AFFINITY,
         .use_static_allocation = true};
 
-    control_task_ = std::make_unique<Task>(
+    task_ptr = std::make_unique<Task>(
         config,
-        [this]()
-        { this->controlTask(); },
-        control_task_stack,
-        &control_task_tcb);
+        std::forward<TaskFunc>(task_function),
+        stack_buffer,
+        tcb_buffer);
 
     // Set suspension mutex for coordinated shutdown
-    control_task_->setSuspensionMutex(control_loop_mutex);
+    if (suspension_mutex)
+    {
+        task_ptr->setSuspensionMutex(suspension_mutex);
+    }
 
-    return control_task_->start();
+    return task_ptr->start();
+}
+
+bool TaskManager::createControlTask()
+{
+    return createTask(control_task_, 
+                     "ControlTask",
+                     CONTROL_TASK_STACK_SIZE,
+                     CONTROL_TASK_PRIORITY,
+                     [this]() { this->controlTask(); },
+                     control_task_stack,
+                     &control_task_tcb,
+                     control_loop_mutex);
 }
 
 bool TaskManager::createOdoBroadcastTask()
 {
-    if (odo_broadcast_task_ != nullptr)
-    {
-        ESP_LOGW(TAG, "Odo broadcast task already exists");
-        return false;
-    }
-
-    Task::Config config{
-        .name = "OdoBroadcastTask",
-        .stack_size = ODO_BROADCAST_TASK_STACK_SIZE,
-        .priority = ODO_BROADCAST_TASK_PRIORITY,
-        .core_id = tskNO_AFFINITY,
-        .use_static_allocation = true};
-
-    odo_broadcast_task_ = std::make_unique<Task>(
-        config,
-        [this]()
-        { this->odoBroadcastTask(); },
-        odo_broadcast_task_stack,
-        &odo_broadcast_task_tcb);
-
-    // Set suspension mutex for coordinated shutdown
-    odo_broadcast_task_->setSuspensionMutex(odo_broadcast_mutex);
-
-    return odo_broadcast_task_->start();
+    return createTask(odo_broadcast_task_,
+                     "OdoBroadcastTask", 
+                     ODO_BROADCAST_TASK_STACK_SIZE,
+                     ODO_BROADCAST_TASK_PRIORITY,
+                     [this]() { this->odoBroadcastTask(); },
+                     odo_broadcast_task_stack,
+                     &odo_broadcast_task_tcb,
+                     odo_broadcast_mutex);
 }
 
 bool TaskManager::controlLoopTaskAction(TaskAction action)
-{
-    return handleTaskAction(action, control_task_, [this]() -> std::unique_ptr<Task>
-                            {
-        if (createControlTask()) {
-            return std::move(control_task_);
-        }
-        return nullptr; });
-}
-
-bool TaskManager::odoBroadcastTaskAction(TaskAction action)
-{
-    return handleTaskAction(action, odo_broadcast_task_, [this]() -> std::unique_ptr<Task>
-                            {
-        if (createOdoBroadcastTask()) {
-            return std::move(odo_broadcast_task_);
-        }
-        return nullptr; });
-}
-
-bool TaskManager::handleTaskAction(TaskAction action,
-                                   std::unique_ptr<Task> &task_wrapper,
-                                   std::function<std::unique_ptr<Task>()> task_creator)
 {
     using enum TaskAction;
     switch (action)
     {
     case Start:
-        if (task_wrapper == nullptr)
+        if (control_task_ == nullptr)
         {
-            task_wrapper = task_creator();
+            createControlTask();
         }
-        return task_wrapper != nullptr;
+        return control_task_ != nullptr;
 
     case Stop:
-        return task_wrapper ? task_wrapper->stop() : true;
+        return control_task_ ? control_task_->stop() : true;
 
     case Suspend:
-        return task_wrapper ? task_wrapper->suspend() : false;
+        return control_task_ ? control_task_->suspend() : false;
 
     case Resume:
-        return task_wrapper ? task_wrapper->resume() : false;
+        return control_task_ ? control_task_->resume() : false;
     }
+    return false;
+}
 
+bool TaskManager::odoBroadcastTaskAction(TaskAction action)
+{
+    using enum TaskAction;
+    switch (action)
+    {
+    case Start:
+        if (odo_broadcast_task_ == nullptr)
+        {
+            createOdoBroadcastTask();
+        }
+        return odo_broadcast_task_ != nullptr;
+
+    case Stop:
+        return odo_broadcast_task_ ? odo_broadcast_task_->stop() : true;
+
+    case Suspend:
+        return odo_broadcast_task_ ? odo_broadcast_task_->suspend() : false;
+
+    case Resume:
+        return odo_broadcast_task_ ? odo_broadcast_task_->resume() : false;
+    }
     return false;
 }
 
@@ -367,12 +384,9 @@ bool TaskManager::enqueueTaskStateCommand(TaskType task_type, TaskAction action)
 void TaskManager::processTaskStateQueue()
 {
     TaskStateCommand command;
-    uint8_t processed_count = 0;
-    const uint8_t max_commands_per_iteration = 5; // Prevent excessive processing in one go
-
-    // Process pending commands in the queue (with limit to prevent starvation)
-    while (processed_count < max_commands_per_iteration &&
-           xQueueReceive(task_state_queue_, &command, pdMS_TO_TICKS(50)) == pdPASS)
+    
+    // Process all pending commands in the queue
+    while (xQueueReceive(task_state_queue_, &command, 0) == pdPASS)
     {
         using enum TaskType;
         switch (command.task_type)
@@ -387,14 +401,5 @@ void TaskManager::processTaskStateQueue()
             ESP_LOGW(TAG, "ProcessQueue: Unknown task type %d", static_cast<int>(command.task_type));
             break;
         }
-
-        processed_count++;
-    }
-
-    // If we hit the limit, trigger another processing cycle
-    if (processed_count >= max_commands_per_iteration &&
-        uxQueueMessagesWaiting(task_state_queue_) > 0)
-    {
-        notifyTaskManager(task_manager_notifications::PROCESS_TASK_STATE_QUEUE);
     }
 }

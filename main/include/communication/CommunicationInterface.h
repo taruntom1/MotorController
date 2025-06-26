@@ -4,11 +4,11 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
-#include "UART_Protocol.h"
-#include "MyStructs.h"
-#include "Commands.h"
-#include "TimeSyncServer.h"
-#include "TaskManager.h"
+#include "communication/UART_Protocol.h"
+#include "utils/MyStructs.h"
+#include "communication/Commands.h"
+#include "communication/TimeSyncServer.h"
+#include "core/TaskManager.h"
 
 #include <stdexcept>
 #include <string>

@@ -4,8 +4,8 @@
 #include <functional>
 #include <memory>
 
-#include "MyStructs.h"
-#include "Task.h"
+#include "utils/MyStructs.h"
+#include "core/Task.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/queue.h"
@@ -60,10 +60,10 @@ public:
     TaskManager(TaskManagerConfig config, WheelContainer &wheelContainer);
     ~TaskManager();
 
-    // Task actions : Blocking
+    // Task actions : Blocking (direct execution)
     bool controlLoopTaskAction(TaskAction action);
     bool odoBroadcastTaskAction(TaskAction action);
-    // Task actions : Non-blocking
+    // Task actions : Non-blocking (queued execution via wheel manager task)
     void controlLoopTaskActionNonBlocking(TaskAction action);
     void odoBroadcastTaskActionNonBlocking(TaskAction action);
 
@@ -82,6 +82,11 @@ public:
     }
 
 private:
+    void updateTaskFrequency(frequency_t frequency, 
+                           std::atomic<TickType_t>& delay_ticks, 
+                           const char* task_name,
+                           std::function<void(frequency_t)> additional_action = nullptr);
+
     static constexpr const char *TAG = "TaskManager";
     static constexpr UBaseType_t WHEEL_MANAGE_TASK_STACK_SIZE = 4096;
     static constexpr UBaseType_t WHEEL_MANAGE_TASK_PRIORITY = 6;
@@ -89,7 +94,6 @@ private:
     static constexpr UBaseType_t CONTROL_TASK_PRIORITY = 5;
     static constexpr UBaseType_t ODO_BROADCAST_TASK_STACK_SIZE = 2048;
     static constexpr UBaseType_t ODO_BROADCAST_TASK_PRIORITY = 4;
-    static constexpr TickType_t TASK_SUSPENSION_TIMEOUT_MS = 500;
     static constexpr UBaseType_t TASK_STATE_QUEUE_LENGTH = 10;
 
     WheelContainer &wheel_container_;
@@ -134,10 +138,17 @@ private:
 
     bool createControlTask();
     bool createOdoBroadcastTask();
+    
+    template<typename TaskFunc>
+    bool createTask(std::unique_ptr<Task>& task_ptr, 
+                   const char* name,
+                   UBaseType_t stack_size,
+                   UBaseType_t priority,
+                   TaskFunc&& task_function,
+                   StackType_t* stack_buffer,
+                   StaticTask_t* tcb_buffer,
+                   SemaphoreHandle_t suspension_mutex = nullptr);
 
-    bool handleTaskAction(TaskAction action,
-                          std::unique_ptr<Task> &task_wrapper,
-                          std::function<std::unique_ptr<Task>()> task_creator);
     void processTaskStateQueue();
 
     void notifyTaskManager(task_manager_notifications notification)

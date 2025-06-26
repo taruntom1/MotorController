@@ -1,6 +1,6 @@
-#include "ControlInterface.h"
+#include "communication/CommunicationInterface.h"
 #include "esp_log.h"
-#include "TimeSyncServer.h"
+#include "communication/TimeSyncServer.h"
 #include <string.h>
 #include <format>
 #include <utility>

@@ -1,6 +1,6 @@
-#include "MPU6050Reader.h"
-#include <cstring> // For memset
-#include <cstdio>  // For printf (optional debugging)
+#include "hardware/MPU6050Reader.h"
+#include <stdexcept>
+#include <cstring>
 
 MPU6050Reader::MPU6050Reader(const Config &config, imu_data_t *out_data_ptr)
     : cfg_(config),
@@ -25,17 +25,15 @@ MPU6050Reader::MPU6050Reader(const Config &config, imu_data_t *out_data_ptr)
     data_mutex_ = xSemaphoreCreateMutex();
     if (!data_mutex_)
     {
-        // Failed to create mutex
-        printf("MPU6050Reader: Failed to create data mutex\n");
-        return;
+        throw std::runtime_error("Failed to create data mutex");
     }
 
     // Initialize sensor (I2C driver + MPU6050 handle + configuration)
     esp_err_t err = initializeSensor();
     if (err != ESP_OK)
     {
-        printf("MPU6050Reader: Sensor initialization failed: %d\n", err);
         cleanup();
+        throw std::runtime_error("Sensor initialization failed");
     }
 }
 
@@ -60,14 +58,12 @@ esp_err_t MPU6050Reader::initializeSensor()
     ret = i2c_param_config(cfg_.i2c_port, &i2c_conf);
     if (ret != ESP_OK)
     {
-        printf("MPU6050Reader: i2c_param_config failed: %d\n", ret);
         return ret;
     }
 
     ret = i2c_driver_install(cfg_.i2c_port, I2C_MODE_MASTER, 0, 0, 0);
     if (ret != ESP_OK)
     {
-        printf("MPU6050Reader: i2c_driver_install failed: %d\n", ret);
         return ret;
     }
 
@@ -75,7 +71,6 @@ esp_err_t MPU6050Reader::initializeSensor()
     sensor_handle_ = mpu6050_create(cfg_.i2c_port, cfg_.dev_addr);
     if (sensor_handle_ == nullptr)
     {
-        printf("MPU6050Reader: mpu6050_create returned NULL\n");
         return ESP_FAIL;
     }
 
@@ -83,7 +78,6 @@ esp_err_t MPU6050Reader::initializeSensor()
     ret = mpu6050_wake_up(sensor_handle_);
     if (ret != ESP_OK)
     {
-        printf("MPU6050Reader: mpu6050_wake_up failed: %d\n", ret);
         return ret;
     }
 
@@ -91,7 +85,6 @@ esp_err_t MPU6050Reader::initializeSensor()
     ret = mpu6050_config(sensor_handle_, cfg_.acce_fs, cfg_.gyro_fs);
     if (ret != ESP_OK)
     {
-        printf("MPU6050Reader: mpu6050_config failed: %d\n", ret);
         return ret;
     }
 
@@ -117,9 +110,9 @@ void MPU6050Reader::run()
 
     if (xReturned != pdPASS)
     {
-        printf("MPU6050Reader: Failed to create reading task\n");
         task_handle_ = nullptr;
         is_running_ = false;
+        throw std::runtime_error("Failed to create reading task");
     }
     else
     {
@@ -189,16 +182,10 @@ void MPU6050Reader::taskFunc(void *arg)
     while (true)
     {
         // 1. Read accelerometer values
-        if (mpu6050_get_acce(self->sensor_handle_, &acce_val) != ESP_OK)
-        {
-            // Optionally log or handle error
-        }
+        mpu6050_get_acce(self->sensor_handle_, &acce_val);
 
         // 2. Read gyroscope values
-        if (mpu6050_get_gyro(self->sensor_handle_, &gyro_val) != ESP_OK)
-        {
-            // Optionally log or handle error
-        }
+        mpu6050_get_gyro(self->sensor_handle_, &gyro_val);
 
         // 3. Write into shared IMUData struct under mutex
         if (self->data_mutex_ && xSemaphoreTake(self->data_mutex_, 0) == pdTRUE)

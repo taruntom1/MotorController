@@ -1,4 +1,4 @@
-#include "EncoderPulseReader.h"
+#include "hardware/EncoderPulseReader.h"
 
 EncoderPulseReader::EncoderPulseReader(pcnt_config_t *_pcnt_config)
     : _pcnt_config(_pcnt_config),

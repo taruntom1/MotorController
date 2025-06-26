@@ -10,11 +10,11 @@
 #include "esp_log.h"
 
 //=== Custom Includes ===//
-#include "MyStructs.h"
-#include "MotorDriver.h"
-#include "EncoderPulseReader.h"
-#include "PID.h"
-#include "RollingMeanAccumulator.h"
+#include "utils/MyStructs.h"
+#include "hardware/MotorDriver.h"
+#include "hardware/EncoderPulseReader.h"
+#include "utils/PID.h"
+#include "utils/RollingMeanAccumulator.h"
 
 //=== Structs ===//
 struct LoopDelays

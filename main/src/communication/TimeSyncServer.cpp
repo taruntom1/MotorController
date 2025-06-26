@@ -1,10 +1,10 @@
-#include "TimeSyncServer.h"
+#include "communication/TimeSyncServer.h"
 
 #include <vector>
 #include <span>
 #include "esp_timer.h"
-#include "Commands.h"
-#include "UART_Protocol.h"
+#include "communication/Commands.h"
+#include "communication/UART_Protocol.h"
 
 uint16_t crc16_ccitt(std::span<const uint8_t> data)
 {
