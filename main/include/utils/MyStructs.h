@@ -396,3 +396,37 @@ struct TaskHandles
  *  @brief Defines notification messages for the motor controller.
  *  @{
  */
+struct imu_data_t
+{
+    float accel_x;
+    float accel_y;
+    float accel_z;
+    float gyro_x;
+    float gyro_y;
+    float gyro_z;
+
+    constexpr static size_t size = sizeof(accel_x) + sizeof(accel_y) + sizeof(accel_z) +
+                                   sizeof(gyro_x) + sizeof(gyro_y) + sizeof(gyro_z);
+
+    std::vector<uint8_t> to_bytes() const
+    {
+        std::vector<uint8_t> buf;
+        buf.reserve(size);
+        detail::appendLE(buf, accel_x);
+        detail::appendLE(buf, accel_y);
+        detail::appendLE(buf, accel_z);
+        detail::appendLE(buf, gyro_x);
+        detail::appendLE(buf, gyro_y);
+        detail::appendLE(buf, gyro_z);
+        return buf;
+    }
+    void from_bytes(const std::vector<uint8_t> &buf, size_t &offset)
+    {
+        accel_x = detail::readLE<float>(buf, offset);
+        accel_y = detail::readLE<float>(buf, offset);
+        accel_z = detail::readLE<float>(buf, offset);
+        gyro_x = detail::readLE<float>(buf, offset);
+        gyro_y = detail::readLE<float>(buf, offset);
+        gyro_z = detail::readLE<float>(buf, offset);
+    }
+};

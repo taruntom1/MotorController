@@ -1,4 +1,4 @@
-#include "hardware/MPU6050Reader.h"
+#include "control/MPU6050Reader.h"
 #include <stdexcept>
 #include <cstring>
 

@@ -49,6 +49,7 @@ public:
     explicit ControlInterface(const protocol_config &config);
 
     void SendOdoData(const std::pair<timestamp_t, std::vector<odometry_t>> &odo_data);
+    void SendIMUData(const std::pair<timestamp_t, imu_data_t> &imu_data);
 
     // Callback connectors
     void setControllerRunCallback(std::function<void(bool)> cb)
@@ -94,6 +95,7 @@ private:
 
     std::vector<uint8_t> cacheVctr;     // to prevent allocation for each call
     std::vector<float> motor_setpoints; // cache for motor setpoints
+    std::vector<uint8_t> imuCacheVctr; // separate cache for IMU data
 
     // Helper methods for exception handling
     template<typename Func>

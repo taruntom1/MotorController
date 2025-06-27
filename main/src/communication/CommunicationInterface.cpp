@@ -371,6 +371,28 @@ void ControlInterface::SendOdoData(const std::pair<timestamp_t, std::vector<odom
     sendProtocolData(cacheVctr, "send odometry data");
 }
 
+void ControlInterface::SendIMUData(const std::pair<timestamp_t, imu_data_t> &imu_data)
+{
+    constexpr uint8_t flag_index = 4;
+    constexpr uint8_t header_and_command[] = {0xaa, 0xaa, 0xaa,
+                                              std::to_underlying(Command::SEND_IMU_DATA)};
+    constexpr size_t baseHeaderSize = sizeof(header_and_command) + 1;
+    constexpr size_t timestampSize = sizeof(timestamp_t);
+    constexpr size_t imuBlockSize = imu_data_t::size;
+    constexpr size_t totalSize = baseHeaderSize + timestampSize + imuBlockSize;
+    imuCacheVctr.resize(totalSize);
+
+    uint8_t *ptr = imuCacheVctr.data();
+    memcpy(ptr, header_and_command, sizeof(header_and_command));
+    ptr[flag_index] = 0; // No flags for IMU data, set to 0
+    ptr += baseHeaderSize;
+    memcpy(ptr, &imu_data.first, timestampSize);
+    ptr += timestampSize;
+    auto imu_bytes = imu_data.second.to_bytes();
+    memcpy(ptr, imu_bytes.data(), imuBlockSize);
+    sendProtocolData(imuCacheVctr, "send imu data");
+}
+
 /* bool ControlInterface::SendControllerProperties()
 {
     protocol.SendCommand(Command::GET_CONTROLLER_PROPERTIES);
