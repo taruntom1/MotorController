@@ -207,10 +207,10 @@ void TaskManager::odoBroadcastTask()
     }
 }
 
-void TaskManager::updateTaskFrequency(frequency_t frequency, 
-                                     std::atomic<TickType_t>& delay_ticks, 
-                                     const char* task_name,
-                                     std::function<void(frequency_t)> additional_action)
+void TaskManager::updateTaskFrequency(frequency_t frequency,
+                                      std::atomic<TickType_t> &delay_ticks,
+                                      const char *task_name,
+                                      std::function<void(frequency_t)> additional_action)
 {
     if (frequency > 0)
     {
@@ -234,8 +234,9 @@ void TaskManager::updateOdoBroadcastFrequency(frequency_t frequency)
 
 void TaskManager::updateControlLoopFrequency(frequency_t frequency)
 {
-    updateTaskFrequency(frequency, control_task_delay_ticks, "Control loop", 
-                       [this](frequency_t freq) { wheel_container_.updateControlLoopFrequency(freq); });
+    updateTaskFrequency(frequency, control_task_delay_ticks, "Control loop",
+                        [this](frequency_t freq)
+                        { wheel_container_.updateControlLoopFrequency(freq); });
 }
 
 void TaskManager::controlLoopTaskActionNonBlocking(TaskAction action)
@@ -248,15 +249,15 @@ void TaskManager::odoBroadcastTaskActionNonBlocking(TaskAction action)
     enqueueTaskStateCommand(TaskType::OdoBroadcast, action);
 }
 
-template<typename TaskFunc>
-bool TaskManager::createTask(std::unique_ptr<Task>& task_ptr, 
-                           const char* name,
-                           UBaseType_t stack_size,
-                           UBaseType_t priority,
-                           TaskFunc&& task_function,
-                           StackType_t* stack_buffer,
-                           StaticTask_t* tcb_buffer,
-                           SemaphoreHandle_t suspension_mutex)
+template <typename TaskFunc>
+bool TaskManager::createTask(std::unique_ptr<Task> &task_ptr,
+                             const char *name,
+                             UBaseType_t stack_size,
+                             UBaseType_t priority,
+                             TaskFunc &&task_function,
+                             StackType_t *stack_buffer,
+                             StaticTask_t *tcb_buffer,
+                             SemaphoreHandle_t suspension_mutex)
 {
     if (task_ptr != nullptr)
     {
@@ -288,26 +289,14 @@ bool TaskManager::createTask(std::unique_ptr<Task>& task_ptr,
 
 bool TaskManager::createControlTask()
 {
-    return createTask(control_task_, 
-                     "ControlTask",
-                     CONTROL_TASK_STACK_SIZE,
-                     CONTROL_TASK_PRIORITY,
-                     [this]() { this->controlTask(); },
-                     control_task_stack,
-                     &control_task_tcb,
-                     control_loop_mutex);
+    return createTask(control_task_, "ControlTask", CONTROL_TASK_STACK_SIZE, CONTROL_TASK_PRIORITY, [this]()
+                      { this->controlTask(); }, control_task_stack, &control_task_tcb, control_loop_mutex);
 }
 
 bool TaskManager::createOdoBroadcastTask()
 {
-    return createTask(odo_broadcast_task_,
-                     "OdoBroadcastTask", 
-                     ODO_BROADCAST_TASK_STACK_SIZE,
-                     ODO_BROADCAST_TASK_PRIORITY,
-                     [this]() { this->odoBroadcastTask(); },
-                     odo_broadcast_task_stack,
-                     &odo_broadcast_task_tcb,
-                     odo_broadcast_mutex);
+    return createTask(odo_broadcast_task_, "OdoBroadcastTask", ODO_BROADCAST_TASK_STACK_SIZE, ODO_BROADCAST_TASK_PRIORITY, [this]()
+                      { this->odoBroadcastTask(); }, odo_broadcast_task_stack, &odo_broadcast_task_tcb, odo_broadcast_mutex);
 }
 
 bool TaskManager::controlLoopTaskAction(TaskAction action)
@@ -340,10 +329,7 @@ bool TaskManager::odoBroadcastTaskAction(TaskAction action)
     switch (action)
     {
     case Start:
-        if (odo_broadcast_task_ == nullptr)
-        {
-            createOdoBroadcastTask();
-        }
+        createOdoBroadcastTask();
         return odo_broadcast_task_ != nullptr;
 
     case Stop:
@@ -384,7 +370,7 @@ bool TaskManager::enqueueTaskStateCommand(TaskType task_type, TaskAction action)
 void TaskManager::processTaskStateQueue()
 {
     TaskStateCommand command;
-    
+
     // Process all pending commands in the queue
     while (xQueueReceive(task_state_queue_, &command, 0) == pdPASS)
     {
