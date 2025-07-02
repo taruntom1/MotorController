@@ -99,6 +99,9 @@ private:
     void InitMotorDriver();
     void InitEncoder();
 
+    // PID Predictor Functions
+    static float speedPredictor(float *setpoint, float *battery_voltage);
+
     // Private Methods
     void refreshOdometry();
 

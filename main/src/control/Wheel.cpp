@@ -315,6 +315,15 @@ void Wheel::deInitAnglePID()
     encoder->clear_pulse_count();
 }
 
+float Wheel::speedPredictor(float *setpoint, float *battery_voltage)
+{
+    // Simple feedforward term proportional to setpoint
+    // This provides a baseline PWM value based on the desired speed
+    // The proportional constant (0.1f) can be tuned based on system characteristics
+    const float feedforward_gain = 0.1f;
+    return feedforward_gain * (*setpoint);
+}
+
 void Wheel::initSpeedPID()
 {
     ESP_LOG_LEVEL_LOCAL(ESP_LOG_INFO, TAG, "Wheel %d speed PID Control task started", wheel_id);
@@ -325,7 +334,8 @@ void Wheel::initSpeedPID()
                                        speedPIDConstants.i,
                                        speedPIDConstants.d,
                                        PID<angularvelocity_t>::DIRECT,
-                                       control_loop_delay_ms);
+                                       control_loop_delay_ms,
+                                       speedPredictor);
 
     motorDriver->setSpeed(0);
     pwm = 0;
