@@ -4,7 +4,7 @@
 #define LOG_LOCAL_LEVEL ESP_LOG_INFO
 
 WheelContainer::WheelContainer()
-    : wheel_data_queue(xQueueCreate(DEFAULT_WHEEL_DATA_QUEUE_SIZE, wheel_data_t::size)),
+    : wheel_data_queue(xQueueCreate(DEFAULT_WHEEL_DATA_QUEUE_SIZE, sizeof(wheel_data_t))),
       control_mode_queue(xQueueCreate(DEFAULT_CONTROL_MODE_QUEUE_SIZE, sizeof(std::pair<uint8_t, ControlMode>))),
       current_control_delay_ticks(DEFAULT_CONTROL_DELAY_TICKS)
 {
@@ -53,6 +53,7 @@ void WheelContainer::updateWheel(const wheel_data_t &wheel)
     }
 
     wheel_slot.emplace(&wheel, current_control_delay_ticks);
+    updateControlMode(i, wheel.control_mode);
 }
 
 void WheelContainer::updateControlMode(uint8_t id, ControlMode mode)

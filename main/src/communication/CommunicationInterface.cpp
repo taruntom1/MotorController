@@ -201,14 +201,23 @@ void ControlInterface::refreshBroadcastStatus()
     // Zero initialize aggregate flag
     odo_broadcast_flag = {};
 
+    bool was_broadcasting = odo_broadcast_flag.angle ||
+                            odo_broadcast_flag.speed ||
+                            odo_broadcast_flag.pwm_value;
+
     for (const auto &flag : odo_broadcast_flags)
     {
         odo_broadcast_flag |= flag;
     }
 
-    const TaskAction action = (odo_broadcast_flag.angle ||
-                               odo_broadcast_flag.speed ||
-                               odo_broadcast_flag.pwm_value)
+    bool should_broadcast = odo_broadcast_flag.angle ||
+                            odo_broadcast_flag.speed ||
+                            odo_broadcast_flag.pwm_value;
+                            
+    if (was_broadcasting == should_broadcast)
+        return;
+
+    const TaskAction action = (should_broadcast)
                                   ? TaskAction::Start
                                   : TaskAction::Stop;
 

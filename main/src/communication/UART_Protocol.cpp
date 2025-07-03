@@ -67,7 +67,7 @@ void UARTProtocol::begin()
             throw UARTInitializationException("Failed to reset pattern queue: " + std::string(esp_err_to_name(err)));
         }
 
-        BaseType_t taskResult = xTaskCreate(&UARTProtocol::uartTask, "uart_task", 3700, this, 10, nullptr);
+        BaseType_t taskResult = xTaskCreate(&UARTProtocol::uartTask, "uart_task", 4700, this, 10, nullptr);
         if (taskResult != pdPASS)
         {
             throw UARTInitializationException("Failed to create UART task");
